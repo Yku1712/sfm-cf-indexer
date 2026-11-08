@@ -57,6 +57,14 @@ export default {
       } catch (e) { return json({ error: e.message }, 500); }
     }
 
+    // SINGLE WALLET LOOKUP
+    if (url.pathname.startsWith("/api/wallet/")) {
+      const address = url.pathname.split("/").pop();
+      const { results } = await env.DB.prepare("SELECT * FROM holders WHERE address = ?").bind(address).all();
+      if (results.length === 0) return json({ error: "Wallet not found" }, 404);
+      return json({ status: "ok", wallet: results[0] });
+    }
+
     if (url.pathname === "/api/prove") {
       const address = url.searchParams.get("address");
       const minAmount = parseFloat(url.searchParams.get("min") || "1");
