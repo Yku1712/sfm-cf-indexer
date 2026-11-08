@@ -1,15 +1,26 @@
 const MINT_ADDRESS = "BwUTq7fS6sfUmHDwAiCQZ3asSiPEapW5zDrsbwtapump";
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 export default {
   async scheduled(event, env, ctx) {
     ctx.waitUntil(fetchAndStore(env));
   },
 
   async fetch(request, env, ctx) {
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
+
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "") {
-      return new Response("SFM Indexer API\n\nEndpoints:\n- /api/holders?limit=N\n- /api/health\n- /api/refresh\n- /api/prove?address=ADDRESS&min=AMOUNT\n", { headers: { "Content-Type": "text/plain" } });
+      return new Response("SFM Indexer API\n\nEndpoints:\n- /api/holders?limit=N\n- /api/health\n- /api/refresh\n- /api/prove?address=ADDRESS&min=AMOUNT\n", { headers: { ...corsHeaders, "Content-Type": "text/plain" } });
     }
 
     if (url.pathname === "/api/health") {
@@ -33,10 +44,9 @@ export default {
     if (url.pathname === "/api/prove") {
       const address = url.searchParams.get("address");
       const minAmount = parseFloat(url.searchParams.get("min") || "1");
-      
+
       if (!address) return json({ error: "Missing ?address= parameter" }, 400);
 
-      // Find first and last time they held this amount
       const { results } = await env.DB.prepare(
         "SELECT COUNT(*) as snapshots_held, MIN(snapshot_at) as first_seen, MAX(snapshot_at) as last_seen FROM snapshots WHERE address = ? AND amount >= ?"
       ).bind(address, minAmount).all();
@@ -68,7 +78,7 @@ export default {
       }
     }
 
-    return new Response("Not found\n", { status: 404 });
+    return new Response("Not found\n", { status: 404, headers: corsHeaders });
   },
 };
 
@@ -101,9 +111,7 @@ async function fetchAndStore(env) {
 
     for (const acc of data.result.value) {
       const amt = parseFloat(acc.amount);
-      // 1. Update live holders
       holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
-      // 2. Save historical snapshot
       snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
     }
 
@@ -119,6 +127,7 @@ async function fetchAndStore(env) {
 
 function json(obj, status = 200) {
   return new Response(JSON.stringify(obj, null, 2), {
-    status, headers: { "Content-Type": "application/json" },
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }
