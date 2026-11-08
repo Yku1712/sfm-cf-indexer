@@ -90,7 +90,7 @@ export default {
 
       // Calculate earned credits (e.g., Score / 100)
       const score = parseFloat(proof.holder_score);
-      const earned = score / 100; 
+      const earned = score / 10; // Adjusted ratio for the new math
       const newBalance = (current[0]?.balance || 0) + earned;
 
       await env.DB.prepare("INSERT OR REPLACE INTO credits (address, balance, last_claimed_at) VALUES (?, ?, ?)")
@@ -129,7 +129,8 @@ async function calculateProof(env, address, minAmount) {
   const durationSeconds = now - startTime;
   const durationDays = durationSeconds / 86400;
   const currentAmount = current[0].amount / 1000000; 
-  const score = (currentAmount * durationDays).toFixed(2);
+  // NEW MATH: Math.sqrt(Tokens) * Days
+  const score = (Math.sqrt(currentAmount) * durationDays).toFixed(2);
 
   return {
     status: "proven",
