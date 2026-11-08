@@ -251,6 +251,11 @@
                 document.getElementById('connect-btn').innerText = connectedWallet.slice(0,4) + '...' + connectedWallet.slice(-4);
                 document.getElementById('connect-btn').className = "bg-gray-700 text-white font-bold py-1 px-3 rounded";
                 document.getElementById('wallet-input').value = connectedWallet;
+                
+                // FIX: Automatically switch to Economy tab and check proof
+                switchTab('economy');
+                checkProof();
+                
             } catch (err) {
                 alert("Connection failed: " + err.message);
             }
