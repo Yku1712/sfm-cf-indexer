@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claim Solfunmeme Credits</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; }
+        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
+    </style>
+</head>
+<body class="text-white min-h-screen flex flex-col items-center justify-center p-4">
+
+    <!-- Header -->
+    <div class="text-center mb-10">
+        <h1 class="text-4xl md:text-5xl font-extrabold text-blue-400 mb-2">Solfunmeme</h1>
+        <p class="text-gray-400 text-lg">Prove your loyalty. Claim your credits.</p>
+    </div>
+
+    <!-- Main Card -->
+    <div class="glass rounded-2xl p-8 max-w-md w-full shadow-2xl relative">
+        
+        <!-- Step 1: Connect Wallet -->
+        <div id="step-connect" class="text-center">
+            <h2 class="text-xl font-bold mb-6 text-gray-200">Connect a wallet to check eligibility</h2>
+            <div class="flex flex-col space-y-3">
+                <button onclick="connectWallet('phantom')" class="bg-[#ab9ff2] hover:bg-[#9b8cf0] text-white font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-2">
+                    <span>Connect Phantom</span>
+                </button>
+                <button onclick="connectWallet('solflare')" class="bg-[#fc7227] hover:bg-[#e6631c] text-white font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-2">
+                    <span>Connect Solflare</span>
+                </button>
+                <button onclick="connectWallet('other')" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-xl transition flex items-center justify-center space-x-2">
+                    <span>Other Wallets</span>
+                </button>
+            </div>
+            <p class="text-xs text-gray-500 mt-4">We only read your public address and on-chain history.</p>
+        </div>
+
+        <!-- Step 2: Loading -->
+        <div id="step-loading" class="hidden text-center py-10">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-400 mx-auto mb-4"></div>
+            <p class="text-gray-300">Scanning Solana blockchain for your holding history...</p>
+            <p class="text-xs text-gray-500 mt-2">This can take a few seconds.</p>
+        </div>
+
+        <!-- Step 3: Results (Proven) -->
+        <div id="step-result" class="hidden text-center">
+            <div class="mb-6">
+                <span class="bg-green-900/50 text-green-400 py-1 px-3 rounded-full text-xs font-bold border border-green-700">✅ Proven Holder</span>
+            </div>
+            
+            <div class="space-y-3 mb-8">
+                <div class="flex justify-between items-center border-b border-gray-700 pb-2">
+                    <span class="text-gray-400">Holding</span>
+                    <span class="font-mono text-white text-lg" id="res-balance">-</span>
+                </div>
+                <div class="flex justify-between items-center border-b border-gray-700 pb-2">
+                    <span class="text-gray-400">Duration</span>
+                    <span class="font-mono text-white text-lg" id="res-duration">-</span>
+                </div>
+                <div class="flex justify-between items-center border-b border-gray-700 pb-2">
+                    <span class="text-gray-400">Holder Score</span>
+                    <span class="font-mono text-blue-400 font-bold text-xl" id="res-score">-</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-400">Credit Balance</span>
+                    <span class="font-mono text-purple-400 font-bold text-xl" id="res-credits">-</span>
+                </div>
+            </div>
+
+            <button id="btn-claim" onclick="claimCredits()" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-extrabold py-4 px-4 rounded-xl transition text-lg shadow-lg shadow-purple-900/50">
+                Claim Daily Credits
+            </button>
+            <div id="claim-message" class="mt-4 text-sm font-bold hidden"></div>
+            
+            <button onclick="disconnect()" class="mt-6 text-xs text-gray-500 hover:text-white underline">Disconnect Wallet</button>
+        </div>
+
+        <!-- Step 4: Error (Not Proven) -->
+        <div id="step-error" class="hidden text-center py-6">
+            <div class="text-5xl mb-4">❌</div>
+            <h2 class="text-xl font-bold text-red-400 mb-2">Not Eligible</h2>
+            <p class="text-gray-300 text-sm mb-6" id="error-message">We could not find any Solfunmeme tokens in this wallet.</p>
+            <button onclick="disconnect()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-lg transition">Try Another Wallet</button>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="mt-8 text-center text-xs text-gray-600">
+        <p>Powered by Cloudflare & Solana</p>
+        <a href="https://sfm-dashboard.pages.dev" class="hover:text-gray-400 underline mt-1 block">View Full Explorer</a>
+    </div>
+
+    <script>
+        const API_BASE = "https://sfm-cf-indexer.yku-solfunmeme.workers.dev";
+        let connectedWallet = null;
+        let currentScore = 0;
+
+        function switchStep(stepId) {
+            ['step-connect', 'step-loading', 'step-result', 'step-error'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(stepId).classList.remove('hidden');
+        }
+
+        async function connectWallet(type) {
+            let provider = null;
+            if (type === 'phantom') {
+                provider = window.phantom?.solana || (window.solana && window.solana.isPhantom ? window.solana : null);
+                if (!provider) return alert("Phantom wallet not found! Please install the extension.");
+            } else if (type === 'solflare') {
+                provider = window.solflare;
+                if (!provider) return alert("Solflare wallet not found! Please install the extension.");
+            } else {
+                if (window.backpack) {
+                    provider = window.backpack;
+                } else {
+                    return alert("No other supported wallets found (like Backpack).");
+                }
+            }
+
+            try {
+                const response = await provider.connect();
+                let pubKey = response.publicKey || provider.publicKey || response;
+                connectedWallet = pubKey.toString();
+                
+                switchStep('step-loading');
+                await checkProof();
+            } catch (err) {
+                alert("Connection failed: " + err.message);
+                switchStep('step-connect');
+            }
+        }
+
+        async function checkProof() {
+            try {
+                // We check for a minimum of 1 token (0.000001 SFM)
+                const res = await fetch(`${API_BASE}/api/prove?address=${connectedWallet}&min=1`);
+                const data = await res.json();
+
+                if (data.status === "proven") {
+                    document.getElementById('res-balance').innerText = `${data.current_balance.toLocaleString()} SFM`;
+                    document.getElementById('res-duration').innerText = `${data.duration_days} Days`;
+                    document.getElementById('res-score').innerText = data.holder_score;
+                    document.getElementById('res-credits').innerText = `${data.credit_balance.toFixed(2)} CR`;
+                    currentScore = parseFloat(data.holder_score);
+                    
+                    switchStep('step-result');
+                    updateClaimButtonState(false);
+                } else {
+                    document.getElementById('error-message').innerText = data.message || "No tokens found.";
+                    switchStep('step-error');
+                }
+            } catch (e) {
+                document.getElementById('error-message').innerText = "Error connecting to the API. Try again later.";
+                switchStep('step-error');
+            }
+        }
+
+        async function claimCredits() {
+            const btn = document.getElementById('btn-claim');
+            const msg = document.getElementById('claim-message');
+            
+            btn.innerText = "Processing...";
+            btn.disabled = true;
+            msg.classList.add('hidden');
+
+            try {
+                const res = await fetch(`${API_BASE}/api/claim`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ address: connectedWallet, min: 1 })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    msg.innerHTML = `<span class="text-green-400">${data.message}</span>`;
+                    msg.classList.remove('hidden');
+                    // Refresh data to show new balance
+                    await checkProof(); 
+                } else {
+                    msg.innerHTML = `<span class="text-red-400">${data.message || data.error}</span>`;
+                    msg.classList.remove('hidden');
+                    updateClaimButtonState(true, data.error === "Cooldown active");
+                }
+            } catch (e) {
+                msg.innerHTML = `<span class="text-red-400">Error claiming credits.</span>`;
+                msg.classList.remove('hidden');
+                btn.innerText = "Claim Daily Credits";
+                btn.disabled = false;
+            }
+        }
+
+        function updateClaimButtonState(disabled, isCooldown = false) {
+            const btn = document.getElementById('btn-claim');
+            btn.disabled = disabled;
+            if (isCooldown) {
+                btn.innerText = "Already Claimed Today";
+                btn.classList.replace('bg-purple-600', 'bg-gray-600');
+            } else {
+                btn.innerText = "Claim Daily Credits";
+                btn.classList.replace('bg-gray-600', 'bg-purple-600');
+            }
+        }
+
+        async function disconnect() {
+            const providers = [window.solflare, window.phantom?.solana, window.solana];
+            for (const p of providers) {
+                if (p && p.disconnect) { try { await p.disconnect(); } catch(e) {} }
+            }
+            connectedWallet = null;
+            switchStep('step-connect');
+        }
+    </script>
+</body>
+</html>

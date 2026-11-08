@@ -143,6 +143,9 @@ export default {
 
       await env.DB.prepare("INSERT OR REPLACE INTO credits (address, balance, last_claimed_at) VALUES (?, ?, ?)").bind(address, newBalance, now).run();
       await env.DB.prepare("INSERT INTO transactions (from_address, to_address, amount, tx_type, created_at) VALUES (?, ?, ?, ?, ?)").bind("SYSTEM_MINT", address, earned, "claim", now).run();
+      
+      // Trimitem alerta
+      await sendAlert(env, "💰 New Credit Claim", `Wallet ${address.slice(0,6)}... claimed credits!`, { Earned: earned.toFixed(2), "New Balance": newBalance.toFixed(2) });
 
       return json({ status: "success", message: `Successfully claimed ${earned.toFixed(2)} credits!`, credits_earned: earned.toFixed(2), new_balance: newBalance.toFixed(2) });
     }
@@ -201,6 +204,34 @@ export default {
     return new Response("Not found", { status: 404, headers: corsHeaders });
   },
 };
+
+
+
+async function sendAlert(env, title, message, metadata = {}) {
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+    console.log("Telegram secrets missing, skipping alert.");
+    return;
+  }
+  
+  let text = `<b>${title}</b>\n${message}\n\n`;
+  for (const [key, value] of Object.entries(metadata)) {
+    text += `<b>${key}:</b> ${value}\n`;
+  }
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text: text, parse_mode: "HTML" })
+    });
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("Telegram API error:", err);
+    }
+  } catch (e) { 
+    console.error("Telegram fetch failed:", e); 
+  }
+}
 
 async function calculateProof(env, address, minAmount) {
   // 1. Verificăm portofelul în baza de date
