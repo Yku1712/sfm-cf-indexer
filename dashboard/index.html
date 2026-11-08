@@ -65,6 +65,13 @@
                 </div>
 
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl mb-4 text-red-400">🐋 Recent Whale Activity (24h)</h2>
+                    <ul id="whale-list" class="space-y-2 text-sm font-mono">
+                        <li class="text-gray-500">Loading...</li>
+                    </ul>
+                </div>
+
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Prove Your Holding</h2>
                     <input type="text" id="wallet-input" placeholder="Wallet Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
                     <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
@@ -291,9 +298,40 @@
             }
         }
 
+        async function loadWhales() {
+            try {
+                const res = await fetch(`${API_BASE}/api/whales/activity?hours=24`);
+                const data = await res.json();
+                const list = document.getElementById('whale-list');
+                list.innerHTML = "";
+                
+                if (data.movements.length === 0) {
+                    list.innerHTML = `<li class="text-gray-500">No whale movements in the last 24h (data still accumulating).</li>`;
+                    return;
+                }
+
+                data.movements.slice(0, 8).forEach(m => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between items-center py-1 border-b border-gray-700";
+                    const color = m.direction === "BUY" ? "text-green-400" : "text-red-400";
+                    const icon = m.direction === "BUY" ? "⬆️" : "⬇️";
+                    li.innerHTML = `
+                        <span class="text-gray-400 text-xs">
+                            ${icon} <a href="#" onclick="fillProof('${m.address}')" class="hover:text-blue-400">${m.address.slice(0,6)}...${m.address.slice(-4)}</a>
+                        </span>
+                        <span class="${color} font-bold text-xs">
+                            ${m.direction === "BUY" ? "+" : ""}${parseFloat(m.delta).toLocaleString()} SFM
+                        </span>
+                    `;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
         loadData();
         loadLeaderboard();
-        setInterval(() => { loadData(); loadLeaderboard(); }, 60000); // Update every minute
+        loadWhales();
+        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); }, 60000); // Update every minute
     </script>
 </body>
 </html>

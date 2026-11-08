@@ -154,6 +154,43 @@ export default {
       return json({ status: "success", message: `Successfully transferred ${amount} credits.` });
     }
 
+    // WHALE ACTIVITY ENDPOINT
+    if (url.pathname === "/api/whales/activity") {
+      const hours = parseInt(url.searchParams.get("hours") || "24", 10);
+      const cutoff = Math.floor(Date.now() / 1000) - (hours * 3600);
+
+      // Find each address's most recent snapshot and their earliest snapshot in the window
+      const { results } = await env.DB.prepare(`
+        SELECT 
+          address,
+          MAX(CASE WHEN snapshot_at >= ? THEN amount END) as current_amount,
+          MIN(CASE WHEN snapshot_at >= ? THEN amount END) as earliest_amount,
+          MAX(snapshot_at) as last_seen
+        FROM snapshots
+        WHERE snapshot_at >= ?
+        GROUP BY address
+        HAVING current_amount != earliest_amount
+        ORDER BY ABS(current_amount - earliest_amount) DESC
+        LIMIT 20
+      `).bind(cutoff, cutoff, cutoff).all();
+
+      const movements = results.map(r => ({
+        address: r.address,
+        current_balance: (r.current_amount / 1000000).toFixed(2),
+        previous_balance: (r.earliest_amount / 1000000).toFixed(2),
+        delta: ((r.current_amount - r.earliest_amount) / 1000000).toFixed(2),
+        direction: r.current_amount > r.earliest_amount ? "BUY" : "SELL",
+        last_updated: r.last_seen
+      }));
+
+      return json({ 
+        status: "ok", 
+        window_hours: hours,
+        count: movements.length, 
+        movements 
+      });
+    }
+
     return new Response("Not found", { status: 404, headers: corsHeaders });
   },
 };
