@@ -52,9 +52,16 @@
 
             <!-- Right Panel -->
             <div class="space-y-8">
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
                     <h2 class="text-xl mb-4 text-blue-300">Supply Distribution</h2>
                     <canvas id="supplyChart"></canvas>
+                </div>
+
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl mb-4 text-yellow-400">🏆 Credit Leaderboard</h2>
+                    <ul id="leaderboard-list" class="space-y-2 text-sm font-mono">
+                        <li class="text-gray-500">Loading...</li>
+                    </ul>
                 </div>
 
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
@@ -63,6 +70,15 @@
                     <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
                     <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition">Check Proof</button>
                     <div id="proof-result" class="mt-4 p-4 bg-gray-900 rounded border border-gray-700 hidden text-sm"></div>
+                    
+                    <!-- Transfer Credits UI -->
+                    <div class="mt-6 pt-6 border-t border-gray-700">
+                        <h3 class="text-lg text-blue-300 mb-2">Transfer Credits</h3>
+                        <input type="text" id="transfer-to" placeholder="Recipient Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-500">
+                        <input type="number" id="transfer-amount" placeholder="Amount" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-500">
+                        <button onclick="transferCredits()" class="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded transition">Send Credits</button>
+                        <div id="transfer-result" class="mt-2 text-center text-sm hidden"></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -225,8 +241,62 @@
             }
         }
 
+        async function loadLeaderboard() {
+            try {
+                const res = await fetch(`${API_BASE}/api/leaderboard`);
+                const data = await res.json();
+                const list = document.getElementById('leaderboard-list');
+                list.innerHTML = "";
+                data.leaderboard.forEach((user, index) => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between items-center py-1 border-b border-gray-700";
+                    li.innerHTML = `
+                        <span class="text-gray-400">#${index + 1} <a href="#" onclick="fillProof('${user.address}')" class="text-gray-300 hover:text-blue-400">${user.address.slice(0,6)}...${user.address.slice(-4)}</a></span>
+                        <span class="text-yellow-400 font-bold">${user.balance.toFixed(2)} CR</span>
+                    `;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        async function transferCredits() {
+            const from = document.getElementById('wallet-input').value.trim(); // Sender is whoever is in the main input
+            const to = document.getElementById('transfer-to').value.trim();
+            const amount = parseFloat(document.getElementById('transfer-amount').value);
+            const resultDiv = document.getElementById('transfer-result');
+
+            if (!from || !to || !amount) {
+                resultDiv.classList.remove('hidden');
+                resultDiv.innerHTML = `<span class="text-red-400">Please fill all fields (Sender is in the top input).</span>`;
+                return;
+            }
+
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = "Processing...";
+
+            try {
+                const res = await fetch(`${API_BASE}/api/transfer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ from, to, amount })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    resultDiv.innerHTML = `<span class="text-green-400 font-bold">${data.message}</span>`;
+                    loadLeaderboard(); // Refresh leaderboard
+                    setTimeout(() => checkProof(), 2000);
+                } else {
+                    resultDiv.innerHTML = `<span class="text-red-400">${data.error}</span>`;
+                }
+            } catch (e) {
+                resultDiv.innerHTML = `<span class="text-red-400">Error transferring.</span>`;
+            }
+        }
+
         loadData();
-        setInterval(loadData, 60000); // Update every minute
+        loadLeaderboard();
+        setInterval(() => { loadData(); loadLeaderboard(); }, 60000); // Update every minute
     </script>
 </body>
 </html>

@@ -13,9 +13,18 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_snapshots_addr_time ON snapshots(address, snapshot_at);
 
--- NEW: Credits table for the loyalty system
 CREATE TABLE IF NOT EXISTS credits (
   address TEXT PRIMARY KEY,
   balance REAL DEFAULT 0,
   last_claimed_at INTEGER
+);
+
+-- NEW: Ledger for all credit movements
+CREATE TABLE IF NOT EXISTS transactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  from_address TEXT,
+  to_address TEXT,
+  amount REAL,
+  tx_type TEXT,
+  created_at INTEGER
 );

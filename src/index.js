@@ -93,8 +93,12 @@ export default {
       const earned = score / 10; // Adjusted ratio for the new math
       const newBalance = (current[0]?.balance || 0) + earned;
 
+      // Update Balance
       await env.DB.prepare("INSERT OR REPLACE INTO credits (address, balance, last_claimed_at) VALUES (?, ?, ?)")
         .bind(address, newBalance, now).run();
+      // Log transaction
+      await env.DB.prepare("INSERT INTO transactions (from_address, to_address, amount, tx_type, created_at) VALUES (?, ?, ?, ?, ?)")
+        .bind("SYSTEM_MINT", address, earned, "claim", now).run();
 
       return json({
         status: "success",
@@ -102,6 +106,44 @@ export default {
         credits_earned: earned.toFixed(2),
         new_balance: newBalance.toFixed(2)
       });
+    }
+
+    // LEADERBOARD ENDPOINT
+    if (url.pathname === "/api/leaderboard") {
+      const { results } = await env.DB.prepare("SELECT address, balance FROM credits ORDER BY balance DESC LIMIT 10").all();
+      return json({ status: "ok", leaderboard: results });
+    }
+
+    // TRANSFER ENDPOINT
+    if (url.pathname === "/api/transfer" && request.method === "POST") {
+      let body;
+      try { body = await request.json(); } catch(e) { return json({ error: "Invalid JSON" }, 400); }
+      
+      const from = body.from;
+      const to = body.to;
+      const amount = parseFloat(body.amount);
+
+      if (!from || !to || isNaN(amount) || amount <= 0) return json({ error: "Missing or invalid parameters" }, 400);
+      if (from === to) return json({ error: "Cannot transfer to yourself" }, 400);
+
+      // Check sender balance
+      const { results: sender } = await env.DB.prepare("SELECT balance FROM credits WHERE address = ?").bind(from).all();
+      const senderBalance = sender[0]?.balance || 0;
+
+      if (senderBalance < amount) return json({ error: "Insufficient credits" }, 400);
+
+      const now = Math.floor(Date.now() / 1000);
+
+      // Execute atomic transfer
+      await env.DB.batch([
+        env.DB.prepare("UPDATE credits SET balance = balance - ? WHERE address = ?").bind(amount, from),
+        env.DB.prepare("INSERT OR IGNORE INTO credits (address, balance) VALUES (?, 0)").bind(to),
+        env.DB.prepare("UPDATE credits SET balance = balance + ? WHERE address = ?").bind(amount, to),
+        env.DB.prepare("INSERT INTO transactions (from_address, to_address, amount, tx_type, created_at) VALUES (?, ?, ?, ?, ?)")
+          .bind(from, to, amount, "transfer", now)
+      ]);
+
+      return json({ status: "success", message: `Successfully transferred ${amount} credits.` });
     }
 
     return new Response("Not found", { status: 404, headers: corsHeaders });
