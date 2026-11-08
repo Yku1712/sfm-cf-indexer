@@ -114,8 +114,16 @@ export default {
       return json({ status: "ok", leaderboard: results });
     }
 
-    // TRANSFER ENDPOINT
+    // TRANSFER ENDPOINT — DISABLED (requires wallet signature auth)
     if (url.pathname === "/api/transfer" && request.method === "POST") {
+      return json({ 
+        error: "Not implemented", 
+        message: "Transfer endpoint requires wallet signature authentication (Solana ed25519 verify) which is not yet implemented. Please use the /api/claim endpoint for now." 
+      }, 501);
+    }
+    
+    // (Disabled code below for reference)
+    if (false) {
       let body;
       try { body = await request.json(); } catch(e) { return json({ error: "Invalid JSON" }, 400); }
       

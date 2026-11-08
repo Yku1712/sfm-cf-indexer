@@ -71,13 +71,10 @@
                     <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition">Check Proof</button>
                     <div id="proof-result" class="mt-4 p-4 bg-gray-900 rounded border border-gray-700 hidden text-sm"></div>
                     
-                    <!-- Transfer Credits UI -->
-                    <div class="mt-6 pt-6 border-t border-gray-700">
-                        <h3 class="text-lg text-blue-300 mb-2">Transfer Credits</h3>
-                        <input type="text" id="transfer-to" placeholder="Recipient Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-500">
-                        <input type="number" id="transfer-amount" placeholder="Amount" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm focus:outline-none focus:border-blue-500">
-                        <button onclick="transferCredits()" class="w-full bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-2 px-4 rounded transition">Send Credits</button>
-                        <div id="transfer-result" class="mt-2 text-center text-sm hidden"></div>
+                    <!-- Transfer Credits UI — disabled until wallet signature auth is implemented -->
+                    <div class="mt-6 pt-6 border-t border-gray-700 opacity-50">
+                        <h3 class="text-lg text-gray-500 mb-2">Transfer Credits (Coming Soon)</h3>
+                        <p class="text-xs text-gray-500">Requires wallet signature authentication (Solana ed25519).</p>
                     </div>
                 </div>
             </div>
