@@ -15,6 +15,7 @@
             <div class="flex space-x-4 text-sm">
                 <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline">GitHub</a>
                 <a href="https://sfm-cf-indexer.yku-solfunmeme.workers.dev/api/export" class="bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-3 rounded">Download CSV</a>
+                <button id="connect-btn" onclick="connectWallet()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-1 px-3 rounded">Connect Wallet</button>
             </div>
         </div>
 
@@ -234,6 +235,80 @@
                 claimDiv.innerHTML = res.ok ? `<span class="text-green-400 font-bold">${data.message}</span>` : `<span class="text-red-400">${data.message || data.error}</span>`;
                 if (res.ok) setTimeout(() => { checkProof(); loadLeaderboard(); }, 2000);
             } catch (e) { claimDiv.innerHTML = `<span class="text-red-400">Error.</span>`; }
+        }
+
+        let connectedWallet = null;
+
+        async function connectWallet() {
+            const provider = window.phantom?.solana;
+            if (!provider) {
+                alert("Phantom wallet not found! Please install it.");
+                return;
+            }
+            try {
+                const response = await provider.connect();
+                connectedWallet = response.publicKey.toString();
+                document.getElementById('connect-btn').innerText = connectedWallet.slice(0,4) + '...' + connectedWallet.slice(-4);
+                document.getElementById('connect-btn').className = "bg-gray-700 text-white font-bold py-1 px-3 rounded";
+                document.getElementById('wallet-input').value = connectedWallet;
+            } catch (err) {
+                alert("Connection failed: " + err.message);
+            }
+        }
+
+        async function secureTransfer() {
+            if (!connectedWallet) {
+                alert("Please connect your wallet first!");
+                return;
+            }
+            
+            const to = document.getElementById('transfer-to').value.trim();
+            const amount = parseFloat(document.getElementById('transfer-amount').value);
+            const resultDiv = document.getElementById('transfer-result');
+            
+            if (!to || !amount) {
+                resultDiv.classList.remove('hidden');
+                resultDiv.innerHTML = `<span class="text-red-400">Fill recipient and amount.</span>`;
+                return;
+            }
+
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = "Waiting for signature...";
+
+            try {
+                const provider = window.phantom?.solana;
+                const message = `Transfer ${amount} credits to ${to}`;
+                const encodedMessage = new TextEncoder().encode(message);
+                
+                // Cerem semnătura
+                const signedMessage = await provider.signMessage(encodedMessage, "utf8");
+                const sigBase64 = btoa(String.fromCharCode(...signedMessage.signature));
+
+                resultDiv.innerHTML = "Verifying...";
+
+                // Trimitem la API
+                const res = await fetch(`${API_BASE}/api/transfer`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        from: connectedWallet, 
+                        to: to, 
+                        amount: amount, 
+                        signature: sigBase64, 
+                        message: message 
+                    })
+                });
+                const data = await res.json();
+
+                if (res.ok) {
+                    resultDiv.innerHTML = `<span class="text-green-400 font-bold">${data.message}</span>`;
+                    loadLeaderboard(); // Update UI
+                } else {
+                    resultDiv.innerHTML = `<span class="text-red-400">${data.error}</span>`;
+                }
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="text-red-400">User rejected or error: ${err.message}</span>`;
+            }
         }
 
         loadData(); loadLeaderboard(); loadWhales(); loadMemos();
