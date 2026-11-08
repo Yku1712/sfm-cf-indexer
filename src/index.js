@@ -243,78 +243,41 @@ async function calculateProof(env, address, minAmount) {
 }
 
 async function fetchTop20AndStore(env) {
-  const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
-  const payload = { jsonrpc: "2.0", id: 1, method: "getTokenLargestAccounts", params: [MINT_ADDRESS, { commitment: "confirmed" }] };
-  const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  if (!response.ok) throw new Error(`Helius error`);
-  const data = await response.json();
-  if (data.error) throw new Error(`RPC error`);
-
-  const now = Math.floor(Date.now() / 1000);
-  const holdersStmts = [];
-  const snapshotStmts = [];
-
-  for (const acc of data.result.value) {
-    const amt = parseFloat(acc.amount);
-    holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
-    snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
-  }
-  if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
-  if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
-  return { status: "ok", count: holdersStmts.length };
-}
-
-async function fetchMemosAndStore(env) {
   if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   
-  // 1. Get recent signatures for the mint
-  const sigPayload = {
-    jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress",
-    params: [MINT_ADDRESS, { limit: 20 }] // Fetch last 20 txs
+  // Fetch top 100 token accounts (Helius returns them sorted by amount)
+  const payload = { 
+    jsonrpc: "2.0", id: 1, method: "getTokenAccounts", 
+    params: { mint: MINT_ADDRESS, limit: 100, page: 1 } 
   };
-
-  const sigRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sigPayload) });
-  if (!sigRes.ok) throw new Error("Failed to fetch signatures");
-  const sigData = await sigRes.json();
   
-  if (!sigData.result) return { status: "ok", count: 0 };
+  const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(`Helius HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(`Helius RPC error`);
 
-  let memoCount = 0;
-  const stmts = [];
-
-  for (const sigInfo of sigData.result) {
-    // Check if we already processed this signature
-    const { results: existing } = await env.DB.prepare("SELECT signature FROM memos WHERE signature = ?").bind(sigInfo.signature).all();
-    if (existing.length > 0) continue; // Skip already processed
-
-    // Fetch the full transaction to find memos
-    const txPayload = {
-      jsonrpc: "2.0", id: 1, method: "getTransaction",
-      params: [sigInfo.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]
-    };
-    
-    const txRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(txPayload) });
-    if (!txRes.ok) continue;
-    const txData = await txRes.json();
-    
-    if (!txData.result) continue;
-    
-    const instructions = txData.result.transaction.message.instructions;
-    for (const ix of instructions) {
-      if (ix.program === "spl-memo" && typeof ix.parsed === "string") {
-        // We found a memo!
-        const wallet = txData.result.transaction.message.accountKeys[0]?.pubkey || "unknown";
-        const blockTime = txData.result.blockTime;
-        stmts.push(env.DB.prepare("INSERT OR IGNORE INTO memos (signature, wallet, memo, block_time) VALUES (?, ?, ?, ?)")
-          .bind(sigInfo.signature, wallet, ix.parsed, blockTime));
-        memoCount++;
-      }
+  const now = Math.floor(Date.now() / 1000);
+  
+  // Aggregate by OWNER (wallet) in case one wallet has multiple token accounts
+  const ownerBalances = {};
+  for (const acc of data.result.token_accounts) {
+    if (parseFloat(acc.amount) > 0) {
+      ownerBalances[acc.owner] = (ownerBalances[acc.owner] || 0) + parseFloat(acc.amount);
     }
   }
 
-  if (stmts.length > 0) await env.DB.batch(stmts);
-  return { status: "ok", mode: "memos", count: memoCount };
+  const holdersStmts = [];
+  const snapshotStmts = [];
+
+  for (const [owner, amt] of Object.entries(ownerBalances)) {
+    holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(owner, amt, now));
+    snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(owner, amt, now));
+  }
+
+  if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
+  if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
+  return { status: "ok", count: Object.keys(ownerBalances).length };
 }
 
 async function fetchAllAndStore(env) {
