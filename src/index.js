@@ -8,14 +8,8 @@ const corsHeaders = {
 
 export default {
   async scheduled(event, env, ctx) {
-    // Cron 1: Every 5 mins (Top 20 fast updates)
-    if (event.cron === "*/5 * * * *") {
-      ctx.waitUntil(fetchTop20AndStore(env));
-    }
-    // Cron 2: Daily at midnight (Full sweep for all 3700+)
-    if (event.cron === "0 0 * * *") {
-      ctx.waitUntil(fetchAllAndStore(env));
-    }
+    if (event.cron === "*/5 * * * *") ctx.waitUntil(fetchTop20AndStore(env));
+    if (event.cron === "0 0 * * *") ctx.waitUntil(fetchAllAndStore(env));
   },
 
   async fetch(request, env, ctx) {
@@ -39,25 +33,16 @@ export default {
     if (url.pathname === "/api/export") {
       const { results } = await env.DB.prepare("SELECT address, amount FROM holders ORDER BY amount DESC").all();
       let csv = "Address,RawAmount,FormattedAmount\n";
-      for (const row of results) {
-        csv += `${row.address},${row.amount},${(row.amount / 1000000).toFixed(2)}\n`;
-      }
-      return new Response(csv, {
-        headers: { ...corsHeaders, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=sfm_holders.csv" }
-      });
+      for (const row of results) csv += `${row.address},${row.amount},${(row.amount / 1000000).toFixed(2)}\n`;
+      return new Response(csv, { headers: { ...corsHeaders, "Content-Type": "text/csv", "Content-Disposition": "attachment; filename=sfm_holders.csv" } });
     }
 
     if (url.pathname === "/api/refresh") {
       const auth = request.headers.get("Authorization");
       if (auth !== `Bearer ${env.REFRESH_SECRET}`) return json({ error: "Unauthorized" }, 401);
-      try {
-        // By default, manual refresh only does top 20 to save API credits
-        const result = await fetchTop20AndStore(env);
-        return json(result);
-      } catch (e) { return json({ error: e.message }, 500); }
+      try { return json(await fetchTop20AndStore(env)); } catch (e) { return json({ error: e.message }, 500); }
     }
 
-    // SINGLE WALLET LOOKUP
     if (url.pathname.startsWith("/api/wallet/")) {
       const address = url.pathname.split("/").pop();
       const { results } = await env.DB.prepare("SELECT * FROM holders WHERE address = ?").bind(address).all();
@@ -68,41 +53,54 @@ export default {
     if (url.pathname === "/api/prove") {
       const address = url.searchParams.get("address");
       const minAmount = parseFloat(url.searchParams.get("min") || "1");
-      if (!address) return json({ error: "Missing ?address= parameter" }, 400);
+      if (!address) return json({ error: "Missing address" }, 400);
 
-      const { results: breaks } = await env.DB.prepare(
-        "SELECT MAX(snapshot_at) as break_time FROM snapshots WHERE address = ? AND amount < ?"
-      ).bind(address, minAmount).all();
-      const lastBreak = breaks[0]?.break_time;
+      const proof = await calculateProof(env, address, minAmount);
+      if (proof.status === "failed") return json(proof);
 
-      let query = "SELECT MIN(snapshot_at) as start_time, COUNT(*) as snapshots FROM snapshots WHERE address = ? AND amount >= ?";
-      let params = [address, minAmount];
-      if (lastBreak) { query += " AND snapshot_at > ?"; params.push(lastBreak); }
+      // Check credits balance
+      const { results: credits } = await env.DB.prepare("SELECT * FROM credits WHERE address = ?").bind(address).all();
+      proof.credit_balance = credits[0]?.balance || 0;
 
-      const { results: starts } = await env.DB.prepare(query).bind(...params).all();
-      const startTime = starts[0]?.start_time;
+      return json(proof);
+    }
 
-      if (!startTime) return json({ status: "failed", message: "Currently not holding the minimum amount", address });
+    // NEW: CLAIM ENDPOINT
+    if (url.pathname === "/api/claim" && request.method === "POST") {
+      let body;
+      try { body = await request.json(); } catch(e) { return json({ error: "Invalid JSON body" }, 400); }
+      
+      const address = body.address;
+      const minAmount = parseFloat(body.min || "1");
+      if (!address) return json({ error: "Missing address" }, 400);
 
-      const { results: current } = await env.DB.prepare("SELECT amount FROM holders WHERE address = ?").bind(address).all();
-      if (!current[0] || current[0].amount < minAmount) return json({ status: "failed", message: "Sold recently", address });
+      const proof = await calculateProof(env, address, minAmount);
+      if (proof.status === "failed") return json({ error: "Not eligible for credits", reason: proof.message }, 400);
 
       const now = Math.floor(Date.now() / 1000);
-      const durationSeconds = now - startTime;
-      const durationDays = durationSeconds / 86400;
-      const currentAmount = current[0].amount / 1000000; 
       
-      const score = (currentAmount * durationDays).toFixed(2);
+      // Check existing credits and cooldown (24h = 86400s)
+      const { results: current } = await env.DB.prepare("SELECT * FROM credits WHERE address = ?").bind(address).all();
+      const lastClaimed = current[0]?.last_claimed_at || 0;
+      
+      if (now - lastClaimed < 86400) {
+        const hoursLeft = ((86400 - (now - lastClaimed)) / 3600).toFixed(1);
+        return json({ error: "Cooldown active", message: `You can claim again in ${hoursLeft} hours.`, current_balance: current[0].balance }, 429);
+      }
+
+      // Calculate earned credits (e.g., Score / 100)
+      const score = parseFloat(proof.holder_score);
+      const earned = score / 100; 
+      const newBalance = (current[0]?.balance || 0) + earned;
+
+      await env.DB.prepare("INSERT OR REPLACE INTO credits (address, balance, last_claimed_at) VALUES (?, ?, ?)")
+        .bind(address, newBalance, now).run();
 
       return json({
-        status: "proven",
-        address: address,
-        min_amount_held: minAmount,
-        current_balance: currentAmount,
-        streak_started_at: startTime,
-        duration_hours: (durationSeconds / 3600).toFixed(2),
-        duration_days: durationDays.toFixed(2),
-        holder_score: score
+        status: "success",
+        message: `Successfully claimed ${earned.toFixed(2)} credits!`,
+        credits_earned: earned.toFixed(2),
+        new_balance: newBalance.toFixed(2)
       });
     }
 
@@ -110,19 +108,46 @@ export default {
   },
 };
 
-// ==========================================
-// FETCHERS
-// ==========================================
+// Helper to calculate proof (reused in /prove and /claim)
+async function calculateProof(env, address, minAmount) {
+  const { results: breaks } = await env.DB.prepare("SELECT MAX(snapshot_at) as break_time FROM snapshots WHERE address = ? AND amount < ?").bind(address, minAmount).all();
+  const lastBreak = breaks[0]?.break_time;
+
+  let query = "SELECT MIN(snapshot_at) as start_time, COUNT(*) as snapshots FROM snapshots WHERE address = ? AND amount >= ?";
+  let params = [address, minAmount];
+  if (lastBreak) { query += " AND snapshot_at > ?"; params.push(lastBreak); }
+
+  const { results: starts } = await env.DB.prepare(query).bind(...params).all();
+  const startTime = starts[0]?.start_time;
+
+  if (!startTime) return { status: "failed", message: "Currently not holding the minimum amount", address };
+
+  const { results: current } = await env.DB.prepare("SELECT amount FROM holders WHERE address = ?").bind(address).all();
+  if (!current[0] || current[0].amount < minAmount) return { status: "failed", message: "Sold recently", address };
+
+  const now = Math.floor(Date.now() / 1000);
+  const durationSeconds = now - startTime;
+  const durationDays = durationSeconds / 86400;
+  const currentAmount = current[0].amount / 1000000; 
+  const score = (currentAmount * durationDays).toFixed(2);
+
+  return {
+    status: "proven",
+    address: address,
+    current_balance: currentAmount,
+    duration_hours: (durationSeconds / 3600).toFixed(2),
+    duration_days: durationDays.toFixed(2),
+    holder_score: score
+  };
+}
 
 async function fetchTop20AndStore(env) {
-  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const payload = { jsonrpc: "2.0", id: 1, method: "getTokenLargestAccounts", params: [MINT_ADDRESS, { commitment: "confirmed" }] };
-
   const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  if (!response.ok) throw new Error(`Helius HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`Helius error`);
   const data = await response.json();
-  if (data.error) throw new Error(`Helius RPC error`);
+  if (data.error) throw new Error(`RPC error`);
 
   const now = Math.floor(Date.now() / 1000);
   const holdersStmts = [];
@@ -133,14 +158,12 @@ async function fetchTop20AndStore(env) {
     holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
     snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
   }
-
   if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
   if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
-  return { status: "ok", mode: "top20", count: holdersStmts.length };
+  return { status: "ok", count: holdersStmts.length };
 }
 
 async function fetchAllAndStore(env) {
-  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const now = Math.floor(Date.now() / 1000);
   let page = 1;
@@ -148,40 +171,26 @@ async function fetchAllAndStore(env) {
   let totalStored = 0;
 
   while (hasMore) {
-    const payload = {
-      jsonrpc: "2.0", id: "1", method: "getTokenAccounts",
-      params: { mint: MINT_ADDRESS, page: page, limit: 1000 }
-    };
-    
+    const payload = { jsonrpc: "2.0", id: "1", method: "getTokenAccounts", params: { mint: MINT_ADDRESS, page: page, limit: 1000 } };
     const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     if (!response.ok) break;
-    
     const data = await response.json();
-    if (!data.result || !data.result.token_accounts || data.result.token_accounts.length === 0) {
-      hasMore = false;
-      break;
-    }
+    if (!data.result || !data.result.token_accounts || data.result.token_accounts.length === 0) break;
 
     const holdersStmts = [];
     const snapshotStmts = [];
-
     for (const acc of data.result.token_accounts) {
       if (acc.amount > 0) {
         holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.owner, acc.amount, now));
         snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.owner, acc.amount, now));
       }
     }
-
     if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
     if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
-
     totalStored += holdersStmts.length;
     page++;
-    
-    // Slight delay to avoid rate limiting
     await new Promise(r => setTimeout(r, 500));
   }
-  
   return { status: "ok", mode: "full_sweep", count: totalStored };
 }
 
