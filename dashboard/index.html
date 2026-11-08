@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SFM Indexer Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white font-sans p-8">
+    <div class="max-w-5xl mx-auto">
+        <div class="flex items-center justify-between mb-8">
+            <h1 class="text-3xl font-bold text-blue-400">Solfunmeme Data Indexer</h1>
+            <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline text-sm">View GitHub Repo</a>
+        </div>
+
+        <!-- API Status -->
+        <div class="bg-gray-800 p-4 rounded-lg mb-8 shadow-lg">
+            <h2 class="text-xl mb-2 text-gray-300">System Status</h2>
+            <div id="status" class="text-sm font-mono text-green-400">Loading...</div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Top Holders -->
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-blue-300">Top Holders</h2>
+                <div class="overflow-y-auto max-h-96">
+                    <table class="w-full text-left text-sm">
+                        <thead class="text-gray-400 border-b border-gray-700">
+                            <tr>
+                                <th class="pb-2">#</th>
+                                <th class="pb-2">Address</th>
+                                <th class="pb-2 text-right">Amount (Raw)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="holders-table" class="divide-y divide-gray-700">
+                            <!-- Data inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Proof of Holding -->
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-blue-300">Prove Your Holding</h2>
+                <p class="text-sm text-gray-400 mb-4">Enter a Solana wallet address to prove how long you have held SFM.</p>
+                <input type="text" id="wallet-input" placeholder="e.g. DXEfhvmHX6vxRios4LVxaFsBwBgvUmL1x3ChKG5VWPpP" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
+                <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
+                <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition">Check Proof</button>
+                <div id="proof-result" class="mt-4 p-4 bg-gray-900 rounded border border-gray-700 hidden">
+                    <!-- Proof result inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = "https://sfm-cf-indexer.yku-solfunmeme.workers.dev";
+
+        async function loadStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/health`);
+                const data = await res.json();
+                document.getElementById('status').innerHTML = `
+                    Status: <span class="text-green-400">${data.status.toUpperCase()}</span><br>
+                    Total Holders: ${data.total_holders_stored}<br>
+                    Last Update: ${data.last_update_age_sec ? data.last_update_age_sec + ' seconds ago' : 'Pending...'}
+                `;
+            } catch (e) {
+                document.getElementById('status').innerHTML = `<span class="text-red-400">Error loading status</span>`;
+            }
+        }
+
+        async function loadHolders() {
+            try {
+                const res = await fetch(`${API_BASE}/api/holders?limit=20`);
+                const data = await res.json();
+                const tbody = document.getElementById('holders-table');
+                tbody.innerHTML = "";
+                
+                data.holders.forEach((holder, index) => {
+                    const tr = document.createElement('tr');
+                    // Format the amount from raw to readable (divide by 10^6 assuming 6 decimals)
+                    const formattedAmount = (holder.amount / 1000000).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                    tr.innerHTML = `
+                        <td class="py-2 text-gray-500">${index + 1}</td>
+                        <td class="py-2 font-mono text-xs"><a href="https://solscan.io/account/${holder.address}" target="_blank" class="hover:text-blue-400">${holder.address.slice(0, 6)}...${holder.address.slice(-4)}</a></td>
+                        <td class="py-2 text-right text-green-400">${formattedAmount}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) {
+                console.error("Error loading holders", e);
+            }
+        }
+
+        async function checkProof() {
+            const address = document.getElementById('wallet-input').value.trim();
+            const min = document.getElementById('min-input').value;
+            const resultDiv = document.getElementById('proof-result');
+            
+            if (!address) return;
+
+            resultDiv.classList.remove('hidden');
+            resultDiv.innerHTML = "Loading...";
+
+            try {
+                const res = await fetch(`${API_BASE}/api/prove?address=${address}&min=${min}`);
+                const data = await res.json();
+                
+                if (data.status === "proven") {
+                    resultDiv.innerHTML = `
+                        <h3 class="text-green-400 font-bold mb-2">✅ Holding Proven</h3>
+                        <p class="text-sm">This wallet has held at least <strong>${min}</strong> raw units for:</p>
+                        <p class="text-2xl font-mono text-white mt-2">${data.duration_hours} Hours</p>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <h3 class="text-red-400 font-bold mb-2">❌ Not Proven</h3>
+                        <p class="text-sm text-gray-400">This wallet has not held the minimum amount recently.</p>
+                    `;
+                }
+            } catch (e) {
+                resultDiv.innerHTML = `<span class="text-red-400">Error fetching proof.</span>`;
+            }
+        }
+
+        loadStatus();
+        loadHolders();
+        // Auto-refresh every 30 seconds
+        setInterval(() => { loadStatus(); loadHolders(); }, 30000);
+    </script>
+</body>
+</html>
