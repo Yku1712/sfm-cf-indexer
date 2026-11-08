@@ -1,0 +1,11 @@
+name = "sfm-cf-indexer"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sfm-indexer-db"
+database_id = "e33f881f-eaff-4e33-a678-5ed0333402c7"
+
+[triggers]
+crons = ["*/5 * * * *"]
