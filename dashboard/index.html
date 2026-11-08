@@ -16,7 +16,10 @@
 
         <div class="bg-gray-800 p-4 rounded-lg mb-8 shadow-lg flex justify-between items-center">
             <div id="status" class="text-sm font-mono text-green-400">Loading...</div>
-            <input type="text" id="search-input" placeholder="Search wallet address..." class="p-2 bg-gray-700 rounded border border-gray-600 text-white w-96 focus:outline-none focus:border-blue-500">
+            <div class="flex space-x-2">
+                <input type="text" id="search-input" placeholder="Search address..." class="p-2 bg-gray-700 rounded border border-gray-600 text-white w-64 focus:outline-none focus:border-blue-500">
+                <a href="https://sfm-cf-indexer.yku-solfunmeme.workers.dev/api/export" class="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition text-sm flex items-center">Download CSV</a>
+            </div>
         </div>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -177,8 +180,14 @@
                 const data = await res.json();
                 
                 if (data.status === "proven") {
-                    resultDiv.innerHTML = `<h3 class="text-green-400 font-bold mb-1">✅ Proven</h3>
-                        <p>Held for <strong>${data.duration_hours} hours</strong> continuously.</p>`;
+                    resultDiv.innerHTML = `
+                        <h3 class="text-green-400 font-bold mb-1">✅ Proven</h3>
+                        <p class="mb-2">Held <strong>${data.current_balance.toLocaleString()} tokens</strong> for <strong>${data.duration_hours} hours</strong>.</p>
+                        <div class="bg-blue-900 p-2 rounded text-center">
+                            <span class="text-xs text-blue-300 block">HOLDER SCORE</span>
+                            <span class="text-xl font-bold text-white">${data.holder_score}</span>
+                        </div>
+                    `;
                 } else {
                     resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3>
                         <p>Currently not holding this amount.</p>`;
