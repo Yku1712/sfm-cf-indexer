@@ -12,10 +12,16 @@
         <!-- Header -->
         <div class="flex flex-col md:flex-row items-center justify-between mb-6">
             <h1 class="text-3xl font-bold text-blue-400 mb-4 md:mb-0">Solfunmeme Explorer</h1>
-            <div class="flex space-x-4 text-sm">
+            <div class="flex space-x-4 text-sm items-center">
                 <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline">GitHub</a>
                 <a href="https://sfm-cf-indexer.yku-solfunmeme.workers.dev/api/export" class="bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-3 rounded">Download CSV</a>
-                <button id="connect-btn" onclick="connectWallet()" class="bg-purple-600 hover:bg-purple-500 text-white font-bold py-1 px-3 rounded">Connect Wallet</button>
+                <!-- Wallet Selectors -->
+                <button id="btn-phantom" onclick="connectWallet('phantom')" class="bg-[#ab9ff2] hover:bg-[#9b8cf0] text-white font-bold py-1 px-3 rounded transition text-sm">Phantom</button>
+                <button id="btn-solflare" onclick="connectWallet('solflare')" class="bg-[#fc7227] hover:bg-[#e6631c] text-white font-bold py-1 px-3 rounded transition text-sm">Solflare</button>
+                <button id="btn-other" onclick="connectWallet('other')" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-1 px-3 rounded transition text-sm">Other</button>
+                
+                <!-- Disconnect Button (Hidden by default) -->
+                <button id="disconnect-btn" onclick="disconnectWallet()" class="hidden bg-red-600 hover:bg-red-500 text-white font-bold py-1 px-3 rounded transition text-sm">Disconnect</button>
             </div>
         </div>
 
@@ -46,9 +52,13 @@
                 </div>
             </div>
             <div class="space-y-6">
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-6">
                     <h2 class="text-xl mb-4 text-blue-300">Supply Distribution</h2>
                     <canvas id="supplyChart"></canvas>
+                </div>
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl mb-4 text-green-300">Holder Growth</h2>
+                    <canvas id="growthChart"></canvas>
                 </div>
             </div>
         </div>
@@ -66,6 +76,13 @@
                     <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white text-sm">
                     <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded">Check Proof</button>
                     <div id="proof-result" class="mt-4 p-4 bg-gray-900 rounded border border-gray-700 hidden text-sm"></div>
+                </div>
+                <div id="transfer-panel" class="hidden bg-gray-800 p-6 rounded-lg shadow-lg mt-6">
+                    <h2 class="text-xl mb-4 text-purple-300">Secure Transfer</h2>
+                    <input type="text" id="transfer-to" placeholder="Recipient Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm">
+                    <input type="number" id="transfer-amount" placeholder="Amount" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm">
+                    <button onclick="secureTransfer()" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded transition">Sign & Send</button>
+                    <div id="transfer-result" class="mt-2 text-center text-sm hidden"></div>
                 </div>
             </div>
         </div>
@@ -87,11 +104,12 @@
     <script>
         const API_BASE = "https://sfm-cf-indexer.yku-solfunmeme.workers.dev";
         let chartInstance = null;
+        let connectedWallet = null;
 
-        // Tab Logic
         function switchTab(tab) {
             ['overview', 'economy', 'activity'].forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
+                document.getElementById(`content-${t}`).classList.remove('grid');
                 document.getElementById(`tab-${t}`).className = "px-6 py-2 text-gray-400 hover:text-white";
             });
             document.getElementById(`content-${tab}`).classList.remove('hidden');
@@ -124,7 +142,45 @@
                     tbody.appendChild(tr);
                 });
                 renderChart(top10Sum, totalSum - top10Sum);
+                loadGrowthChart();
             } catch (e) { console.error(e); }
+        }
+
+        let growthChartInstance = null;
+        async function loadGrowthChart() {
+            try {
+                const res = await fetch(`${API_BASE}/api/holders/history`);
+                const data = await res.json();
+                
+                const labels = data.history.map(h => h.day);
+                const values = data.history.map(h => h.total_holders);
+
+                if (growthChartInstance) growthChartInstance.destroy();
+                const ctx = document.getElementById('growthChart').getContext('2d');
+                growthChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels.length > 0 ? labels : ['Today'],
+                        datasets: [{
+                            label: 'Total Holders',
+                            data: values.length > 0 ? values : [0],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            fill: true,
+                            tension: 0.4,
+                            borderWidth: 2,
+                            pointRadius: 3
+                        }]
+                    },
+                    options: {
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { ticks: { color: '#9ca3af' }, grid: { display: false } },
+                            y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } }
+                        }
+                    }
+                });
+            } catch (e) { console.error("Failed to load growth chart", e); }
         }
 
         function renderChart(top10, rest) {
@@ -198,6 +254,72 @@
             checkProof();
         }
 
+        async function connectWallet(type) {
+        let provider = null;
+        
+        if (type === 'phantom') {
+            provider = window.phantom?.solana || (window.solana && window.solana.isPhantom ? window.solana : null);
+            if (!provider) return alert("Phantom wallet not found! Please install the Phantom extension.");
+        } else if (type === 'solflare') {
+            provider = window.solflare;
+            if (!provider) return alert("Solflare wallet not found! Please install the Solflare extension.");
+        } else {
+            if (window.backpack) {
+                provider = window.backpack;
+            } else {
+                return alert("No other supported wallets found (like Backpack).");
+            }
+        }
+
+        try {
+            const response = await provider.connect();
+            let pubKey = null;
+            if (response && response.publicKey) pubKey = response.publicKey;
+            else if (provider.publicKey) pubKey = provider.publicKey;
+            else if (response) pubKey = response;
+            
+            if (!pubKey) throw new Error("Could not retrieve public key.");
+            connectedWallet = pubKey.toString();
+            
+            // Ascundem butoanele de conectare
+            document.getElementById('btn-phantom').classList.add('hidden');
+            document.getElementById('btn-solflare').classList.add('hidden');
+            document.getElementById('btn-other').classList.add('hidden');
+            
+            // Arătăm butonul de deconectare
+            const btnDisconnect = document.getElementById('disconnect-btn');
+            btnDisconnect.classList.remove('hidden');
+            btnDisconnect.innerText = `Disconnect (${connectedWallet.slice(0,4)}...${connectedWallet.slice(-4)})`;
+            
+            document.getElementById('wallet-input').value = connectedWallet;
+            switchTab('economy');
+            checkProof();
+        } catch (err) {
+            alert("Connection failed: " + err.message);
+        }
+    }
+
+        async function disconnectWallet() {
+        const providers = [window.solflare, window.phantom?.solana, window.solana, window.backpack];
+        for (const p of providers) {
+            if (p && p.disconnect) {
+                try { await p.disconnect(); } catch(e) {}
+            }
+        }
+        connectedWallet = null;
+        
+        // Re-afișăm cele 3 butoane, ascundem butonul de disconnect
+        document.getElementById('btn-phantom').classList.remove('hidden');
+        document.getElementById('btn-solflare').classList.remove('hidden');
+        document.getElementById('btn-other').classList.remove('hidden');
+        document.getElementById('disconnect-btn').classList.add('hidden');
+        
+        document.getElementById('wallet-input').value = '';
+        document.getElementById('proof-result').classList.add('hidden');
+        document.getElementById('transfer-panel').classList.add('hidden');
+        switchTab('overview');
+    }
+
         async function checkProof() {
             const address = document.getElementById('wallet-input').value.trim();
             const min = document.getElementById('min-input').value;
@@ -205,7 +327,7 @@
             if (!address) return;
 
             resultDiv.classList.remove('hidden');
-            resultDiv.innerHTML = "Verifying...";
+            resultDiv.innerHTML = "Verifying (this may take a few seconds to read blockchain history)...";
 
             try {
                 const res = await fetch(`${API_BASE}/api/prove?address=${address}&min=${min}`);
@@ -220,9 +342,9 @@
                         <div id="claim-result" class="mt-2 text-center text-sm hidden"></div>
                     `;
                 } else {
-                    resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3><p class="text-xs">Currently not holding.</p>`;
+                    resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3><p class="text-xs">${data.message || 'Currently not holding.'}</p>`;
                 }
-            } catch (e) { resultDiv.innerHTML = "Error."; }
+            } catch (e) { resultDiv.innerHTML = "Error verifying proof."; }
         }
 
         async function claimCredits(address, min) {
@@ -234,38 +356,11 @@
                 const data = await res.json();
                 claimDiv.innerHTML = res.ok ? `<span class="text-green-400 font-bold">${data.message}</span>` : `<span class="text-red-400">${data.message || data.error}</span>`;
                 if (res.ok) setTimeout(() => { checkProof(); loadLeaderboard(); }, 2000);
-            } catch (e) { claimDiv.innerHTML = `<span class="text-red-400">Error.</span>`; }
-        }
-
-        let connectedWallet = null;
-
-        async function connectWallet() {
-            const provider = window.phantom?.solana;
-            if (!provider) {
-                alert("Phantom wallet not found! Please install it.");
-                return;
-            }
-            try {
-                const response = await provider.connect();
-                connectedWallet = response.publicKey.toString();
-                document.getElementById('connect-btn').innerText = connectedWallet.slice(0,4) + '...' + connectedWallet.slice(-4);
-                document.getElementById('connect-btn').className = "bg-gray-700 text-white font-bold py-1 px-3 rounded";
-                document.getElementById('wallet-input').value = connectedWallet;
-                
-                // FIX: Automatically switch to Economy tab and check proof
-                switchTab('economy');
-                checkProof();
-                
-            } catch (err) {
-                alert("Connection failed: " + err.message);
-            }
+            } catch (e) { claimDiv.innerHTML = `<span class="text-red-400">Error claiming.</span>`; }
         }
 
         async function secureTransfer() {
-            if (!connectedWallet) {
-                alert("Please connect your wallet first!");
-                return;
-            }
+            if (!connectedWallet) return alert("Connect wallet first!");
             
             const to = document.getElementById('transfer-to').value.trim();
             const amount = parseFloat(document.getElementById('transfer-amount').value);
@@ -281,40 +376,52 @@
             resultDiv.innerHTML = "Waiting for signature...";
 
             try {
-                const provider = window.phantom?.solana;
+                const provider = window.solflare || window.phantom?.solana;
                 const message = `Transfer ${amount} credits to ${to}`;
                 const encodedMessage = new TextEncoder().encode(message);
                 
-                // Cerem semnătura
                 const signedMessage = await provider.signMessage(encodedMessage, "utf8");
                 const sigBase64 = btoa(String.fromCharCode(...signedMessage.signature));
 
                 resultDiv.innerHTML = "Verifying...";
 
-                // Trimitem la API
                 const res = await fetch(`${API_BASE}/api/transfer`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        from: connectedWallet, 
-                        to: to, 
-                        amount: amount, 
-                        signature: sigBase64, 
-                        message: message 
-                    })
+                    body: JSON.stringify({ from: connectedWallet, to: to, amount: amount, signature: sigBase64, message: message })
                 });
                 const data = await res.json();
 
                 if (res.ok) {
                     resultDiv.innerHTML = `<span class="text-green-400 font-bold">${data.message}</span>`;
-                    loadLeaderboard(); // Update UI
+                    loadLeaderboard();
                 } else {
                     resultDiv.innerHTML = `<span class="text-red-400">${data.error}</span>`;
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-red-400">User rejected or error: ${err.message}</span>`;
+                resultDiv.innerHTML = `<span class="text-red-400">Rejected or error.</span>`;
             }
         }
+
+        // Detect when user switches accounts inside Phantom
+        function setupWalletListener() {
+        const handleAccountChange = (publicKey) => {
+            if (publicKey) {
+                connectedWallet = publicKey.toString();
+                document.getElementById('disconnect-btn').innerText = `Disconnect (${connectedWallet.slice(0,4)}...${connectedWallet.slice(-4)})`;
+                document.getElementById('wallet-input').value = connectedWallet;
+                checkProof();
+            } else {
+                disconnectWallet();
+            }
+        };
+
+        if (window.phantom?.solana) window.phantom.solana.on('accountChanged', handleAccountChange);
+        if (window.solflare) window.solflare.on('accountChanged', handleAccountChange);
+        if (window.solana && window.solana.on) window.solana.on('accountChanged', handleAccountChange);
+    }
+
+        setupWalletListener();
 
         loadData(); loadLeaderboard(); loadWhales(); loadMemos();
         setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); }, 60000);

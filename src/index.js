@@ -184,25 +184,58 @@ export default {
       return json({ status: "success", message: `Successfully transferred ${amount} credits to ${to}.` });
     }
 
+    // HOLDER GROWTH HISTORY
+    if (url.pathname === "/api/holders/history") {
+      // Group snapshots by day and count unique addresses
+      const { results } = await env.DB.prepare(`
+        SELECT 
+          strftime('%Y-%m-%d', snapshot_at, 'unixepoch') as day,
+          COUNT(DISTINCT address) as total_holders
+        FROM snapshots
+        GROUP BY day
+        ORDER BY day ASC
+      `).all();
+      return json({ status: "ok", history: results });
+    }
+
     return new Response("Not found", { status: 404, headers: corsHeaders });
   },
 };
 
 async function calculateProof(env, address, minAmount) {
-  const { results: breaks } = await env.DB.prepare("SELECT MAX(snapshot_at) as break_time FROM snapshots WHERE address = ? AND amount < ?").bind(address, minAmount).all();
-  const lastBreak = breaks[0]?.break_time;
+  // 1. Verificăm portofelul în baza de date
+  let { results: current } = await env.DB.prepare("SELECT amount, holding_start_at FROM holders WHERE address = ?").bind(address).all();
 
-  let query = "SELECT MIN(snapshot_at) as start_time, COUNT(*) as snapshots FROM snapshots WHERE address = ? AND amount >= ?";
-  let params = [address, minAmount];
-  if (lastBreak) { query += " AND snapshot_at > ?"; params.push(lastBreak); }
+  // 2. Dacă nu are holding_start_at (nu e încă în baza noastră), mergem pe blockchain
+  if (!current[0] || !current[0].holding_start_at) {
+    const onChainStart = await getOnChainHoldingStart(env, address);
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Fetch balance if missing
+    if (!current[0]) {
+      const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
+      const payload = { jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [address, { "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { "encoding": "jsonParsed" }] };
+      const res = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      let totalRaw = 0;
+      if (data.result && data.result.value) {
+        for (const acc of data.result.value) {
+          if (acc.account.data.parsed.info.mint === MINT_ADDRESS) {
+            totalRaw += parseFloat(acc.account.data.parsed.info.tokenAmount.amount);
+          }
+        }
+      }
+      current = [{ amount: totalRaw, holding_start_at: onChainStart || now }];
+      await env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at, holding_start_at) VALUES (?, ?, ?, ?)").bind(address, totalRaw, now, onChainStart || now).run();
+    } else {
+      current[0].holding_start_at = onChainStart || now;
+      await env.DB.prepare("UPDATE holders SET holding_start_at = ? WHERE address = ?").bind(current[0].holding_start_at, address).run();
+    }
+  }
 
-  const { results: starts } = await env.DB.prepare(query).bind(...params).all();
-  const startTime = starts[0]?.start_time;
-  if (!startTime) return { status: "failed", message: "Currently not holding the minimum amount", address };
+  if (!current[0] || current[0].amount < minAmount) return { status: "failed", message: "No tokens found in this wallet. If you hold tokens on an exchange (Binance, Coinbase, etc.), you must withdraw them to your own Phantom/Solflare wallet to prove holding.", address };
 
-  const { results: current } = await env.DB.prepare("SELECT amount FROM holders WHERE address = ?").bind(address).all();
-  if (!current[0] || current[0].amount < minAmount) return { status: "failed", message: "Sold recently", address };
-
+  const startTime = current[0].holding_start_at;
   const now = Math.floor(Date.now() / 1000);
   const durationSeconds = now - startTime;
   const durationDays = durationSeconds / 86400;
@@ -213,6 +246,62 @@ async function calculateProof(env, address, minAmount) {
     status: "proven", address: address, current_balance: currentAmount,
     duration_hours: (durationSeconds / 3600).toFixed(2), duration_days: durationDays.toFixed(2), holder_score: score
   };
+}
+
+async function getOnChainHoldingStart(env, walletAddress) {
+  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
+  const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
+  
+  // 1. Găsim Token Account-ul (ATA) al portofelului
+  const ataRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [walletAddress, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed" }] }) });
+  const ataData = await ataRes.json();
+  if (!ataData.result || ataData.result.value.length === 0) return null;
+  const validAta = ataData.result.value.find(acc => acc.account.data.parsed.info.mint === MINT_ADDRESS);
+  if (!validAta) return null;
+  const tokenAccount = validAta.pubkey;
+
+  // 2. Luăm semnăturile (tranzacțiile) pentru acest Token Account
+  let before = null;
+  let pages = 0;
+  
+  // Căutăm în ultimele 1000 de tranzacții (paginate câte 100)
+  while (pages < 10) {
+    const sigParams = [tokenAccount, { limit: 100 }];
+    if (before) sigParams[1].before = before;
+    
+    const sigRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: sigParams }) });
+    const sigData = await sigRes.json();
+    if (!sigData.result || sigData.result.length === 0) break;
+
+    // Luăm detaliile tranzacțiilor în bloc (batch)
+    const txs = sigData.result.map(s => s.signature);
+    const batchPayload = txs.map((sig, i) => ({ jsonrpc: "2.0", id: i, method: "getTransaction", params: [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }] }));
+    
+    const batchRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batchPayload) });
+    const batchData = await batchRes.json();
+
+    for (let i = 0; i < batchData.length; i++) {
+      const tx = batchData[i];
+      if (!tx.result || !tx.result.meta) continue;
+
+      const accountIndex = tx.result.transaction.message.accountKeys.findIndex(a => a.pubkey === tokenAccount);
+      const pre = tx.result.meta.preTokenBalances?.find(b => b.accountIndex === accountIndex);
+      const post = tx.result.meta.postTokenBalances?.find(b => b.accountIndex === accountIndex);
+
+      const preAmt = pre ? parseFloat(pre.uiTokenAmount.amount) : 0;
+      const postAmt = post ? parseFloat(post.uiTokenAmount.amount) : 0;
+
+      // Dacă balanța a trecut de la 0 la >0, AICI a început deținerea!
+      if (preAmt === 0 && postAmt > 0) {
+        return tx.result.blockTime;
+      }
+    }
+
+    before = txs[txs.length - 1];
+    pages++;
+    await new Promise(r => setTimeout(r, 100)); // Pauză scurtă pentru API
+  }
+  return null; 
 }
 
 async function fetchTop20AndStore(env) {
