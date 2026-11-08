@@ -3,194 +3,198 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SFM Indexer Dashboard</title>
+    <title>SFM Explorer</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body class="bg-gray-900 text-white font-sans p-8">
+<body class="bg-gray-900 text-white font-sans p-4 md:p-8">
     <div class="max-w-7xl mx-auto">
-        <div class="flex items-center justify-between mb-8">
-            <h1 class="text-3xl font-bold text-blue-400">Solfunmeme Explorer</h1>
-            <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline text-sm">View GitHub Repo</a>
-        </div>
-
-        <div class="bg-gray-800 p-4 rounded-lg mb-8 shadow-lg flex justify-between items-center">
-            <div id="status" class="text-sm font-mono text-green-400">Loading...</div>
-            <div class="flex space-x-2">
-                <input type="text" id="search-input" placeholder="Search address..." class="p-2 bg-gray-700 rounded border border-gray-600 text-white w-64 focus:outline-none focus:border-blue-500">
-                <a href="https://sfm-cf-indexer.yku-solfunmeme.workers.dev/api/export" class="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded transition text-sm flex items-center">Download CSV</a>
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row items-center justify-between mb-6">
+            <h1 class="text-3xl font-bold text-blue-400 mb-4 md:mb-0">Solfunmeme Explorer</h1>
+            <div class="flex space-x-4 text-sm">
+                <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline">GitHub</a>
+                <a href="https://sfm-cf-indexer.yku-solfunmeme.workers.dev/api/export" class="bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-3 rounded">Download CSV</a>
             </div>
         </div>
 
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <!-- Main Table Area -->
+        <!-- Status Bar & Search -->
+        <div class="bg-gray-800 p-4 rounded-lg mb-6 shadow-lg flex flex-col md:flex-row justify-between items-center">
+            <div id="status" class="text-sm font-mono text-green-400 mb-4 md:mb-0">Loading...</div>
+            <input type="text" id="search-input" placeholder="Search wallet..." class="p-2 bg-gray-700 rounded border border-gray-600 text-white w-full md:w-80 focus:outline-none focus:border-blue-500 text-sm">
+        </div>
+
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-700 mb-6">
+            <button onclick="switchTab('overview')" id="tab-overview" class="px-6 py-2 text-blue-400 border-b-2 border-blue-400 font-bold">Overview</button>
+            <button onclick="switchTab('economy')" id="tab-economy" class="px-6 py-2 text-gray-400 hover:text-white">Economy</button>
+            <button onclick="switchTab('activity')" id="tab-activity" class="px-6 py-2 text-gray-400 hover:text-white">Activity</button>
+        </div>
+
+        <!-- TAB 1: OVERVIEW -->
+        <div id="content-overview" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div class="lg:col-span-2 bg-gray-800 p-6 rounded-lg shadow-lg">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl text-blue-300">Holders Ranking</h2>
-                    <div class="text-sm text-gray-400" id="page-info">Page 1</div>
-                </div>
+                <h2 class="text-xl mb-4 text-blue-300">Holders Ranking</h2>
                 <div class="overflow-y-auto h-[600px]">
                     <table class="w-full text-left text-sm">
                         <thead class="text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
-                            <tr>
-                                <th class="pb-2">Rank</th>
-                                <th class="pb-2">Address</th>
-                                <th class="pb-2 text-right">Amount</th>
-                                <th class="pb-2 text-right">Action</th>
-                            </tr>
+                            <tr><th class="pb-2">Rank</th><th class="pb-2">Address</th><th class="pb-2 text-right">Amount</th></tr>
                         </thead>
-                        <tbody id="holders-table" class="divide-y divide-gray-700">
-                            <!-- Rendered via JS -->
-                        </tbody>
+                        <tbody id="holders-table" class="divide-y divide-gray-700"></tbody>
                     </table>
                 </div>
-                <div class="flex justify-between items-center mt-4 pt-4 border-t border-gray-700">
-                    <button onclick="prevPage()" id="btn-prev" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50 text-sm">← Previous</button>
-                    <button onclick="nextPage()" id="btn-next" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">Next →</button>
-                </div>
             </div>
-
-            <!-- Right Panel -->
-            <div class="space-y-8">
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg mb-8">
+            <div class="space-y-6">
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Supply Distribution</h2>
                     <canvas id="supplyChart"></canvas>
                 </div>
+            </div>
+        </div>
 
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h2 class="text-xl mb-4 text-yellow-400">🏆 Credit Leaderboard</h2>
-                    <ul id="leaderboard-list" class="space-y-2 text-sm font-mono">
-                        <li class="text-gray-500">Loading...</li>
-                    </ul>
-                </div>
-
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h2 class="text-xl mb-4 text-red-400">🐋 Recent Whale Activity (24h)</h2>
-                    <ul id="whale-list" class="space-y-2 text-sm font-mono">
-                        <li class="text-gray-500">Loading...</li>
-                    </ul>
-                </div>
-
-                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
-                    <h2 class="text-xl mb-4 text-purple-400">📝 On-Chain Memos</h2>
-                    <ul id="memo-list" class="space-y-2 text-sm font-mono">
-                        <li class="text-gray-500">Loading...</li>
-                    </ul>
-                </div>
-
+        <!-- TAB 2: ECONOMY -->
+        <div id="content-economy" class="hidden grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-2 bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-yellow-400">🏆 Credit Leaderboard</h2>
+                <ul id="leaderboard-list" class="space-y-3 text-sm font-mono"></ul>
+            </div>
+            <div class="space-y-6">
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Prove Your Holding</h2>
-                    <input type="text" id="wallet-input" placeholder="Wallet Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
-                    <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
-                    <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition">Check Proof</button>
+                    <input type="text" id="wallet-input" placeholder="Wallet Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white text-sm">
+                    <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white text-sm">
+                    <button onclick="checkProof()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded">Check Proof</button>
                     <div id="proof-result" class="mt-4 p-4 bg-gray-900 rounded border border-gray-700 hidden text-sm"></div>
-                    
-                    <!-- Transfer Credits UI — disabled until wallet signature auth is implemented -->
-                    <div class="mt-6 pt-6 border-t border-gray-700 opacity-50">
-                        <h3 class="text-lg text-gray-500 mb-2">Transfer Credits (Coming Soon)</h3>
-                        <p class="text-xs text-gray-500">Requires wallet signature authentication (Solana ed25519).</p>
-                    </div>
                 </div>
             </div>
         </div>
+
+        <!-- TAB 3: ACTIVITY -->
+        <div id="content-activity" class="hidden grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-red-400">🐋 Whale Activity (24h)</h2>
+                <ul id="whale-list" class="space-y-2 text-sm font-mono"></ul>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-purple-400">📝 On-Chain Memos</h2>
+                <ul id="memo-list" class="space-y-2 text-sm font-mono"></ul>
+            </div>
+        </div>
+
     </div>
 
     <script>
         const API_BASE = "https://sfm-cf-indexer.yku-solfunmeme.workers.dev";
-        let allHolders = [];
-        let filteredHolders = [];
-        let currentPage = 1;
-        const rowsPerPage = 50;
         let chartInstance = null;
+
+        // Tab Logic
+        function switchTab(tab) {
+            ['overview', 'economy', 'activity'].forEach(t => {
+                document.getElementById(`content-${t}`).classList.add('hidden');
+                document.getElementById(`tab-${t}`).className = "px-6 py-2 text-gray-400 hover:text-white";
+            });
+            document.getElementById(`content-${tab}`).classList.remove('hidden');
+            document.getElementById(`content-${tab}`).classList.add('grid');
+            document.getElementById(`tab-${tab}`).className = "px-6 py-2 text-blue-400 border-b-2 border-blue-400 font-bold";
+        }
 
         async function loadData() {
             try {
-                // Fetch status
                 const resHealth = await fetch(`${API_BASE}/api/health`);
                 const dataHealth = await resHealth.json();
-                document.getElementById('status').innerHTML = `
-                    Status: <span class="text-green-400">${dataHealth.status.toUpperCase()}</span> | 
-                    Tracked: <strong>${dataHealth.total_holders_stored.toLocaleString()}</strong>
-                `;
+                document.getElementById('status').innerHTML = `Status: <span class="text-green-400">${dataHealth.status.toUpperCase()}</span> | Tracked: <strong>${dataHealth.total_holders_stored.toLocaleString()}</strong>`;
 
-                // Fetch ALL holders (max 5000)
-                const res = await fetch(`${API_BASE}/api/holders?limit=5000`);
+                const res = await fetch(`${API_BASE}/api/holders?limit=100`);
                 const data = await res.json();
-                allHolders = data.holders;
-                filteredHolders = allHolders;
+                const tbody = document.getElementById('holders-table');
+                tbody.innerHTML = "";
                 
-                renderTable();
-                renderChart();
-            } catch (e) { 
-                document.getElementById('status').innerText = "Error connecting to API."; 
-            }
+                let top10Sum = 0, totalSum = 0;
+                data.holders.forEach((holder, index) => {
+                    if (index < 10) top10Sum += holder.amount;
+                    totalSum += holder.amount;
+                    const tr = document.createElement('tr');
+                    const formattedAmount = (holder.amount / 1000000).toLocaleString(undefined, {maximumFractionDigits: 0});
+                    tr.innerHTML = `
+                        <td class="py-2 text-gray-500">#${index + 1}</td>
+                        <td class="py-2 font-mono text-xs"><a href="https://solscan.io/account/${holder.address}" target="_blank" class="hover:text-blue-400">${holder.address.slice(0, 4)}...${holder.address.slice(-4)}</a></td>
+                        <td class="py-2 text-right text-green-400">${formattedAmount}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                renderChart(top10Sum, totalSum - top10Sum);
+            } catch (e) { console.error(e); }
         }
 
-        function renderTable() {
-            const tbody = document.getElementById('holders-table');
-            tbody.innerHTML = "";
-            
-            const start = (currentPage - 1) * rowsPerPage;
-            const end = start + rowsPerPage;
-            const pageItems = filteredHolders.slice(start, end);
-
-            pageItems.forEach((holder, index) => {
-                const actualRank = start + index + 1;
-                const tr = document.createElement('tr');
-                const formattedAmount = (holder.amount / 1000000).toLocaleString(undefined, {maximumFractionDigits: 0});
-                tr.innerHTML = `
-                    <td class="py-2 text-gray-500">#${actualRank}</td>
-                    <td class="py-2 font-mono text-xs cursor-pointer hover:text-blue-400" onclick="fillProof('${holder.address}')">${holder.address}</td>
-                    <td class="py-2 text-right text-green-400">${formattedAmount}</td>
-                    <td class="py-2 text-right">
-                        <button onclick="fillProof('${holder.address}')" class="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">Verify</button>
-                    </td>
-                `;
-                tbody.appendChild(tr);
-            });
-
-            document.getElementById('page-info').innerText = `Page ${currentPage} of ${Math.ceil(filteredHolders.length / rowsPerPage) || 1}`;
-            document.getElementById('btn-prev').disabled = currentPage === 1;
-            document.getElementById('btn-next').disabled = end >= filteredHolders.length;
-        }
-
-        function nextPage() { if ((currentPage * rowsPerPage) < filteredHolders.length) { currentPage++; renderTable(); } }
-        function prevPage() { if (currentPage > 1) { currentPage--; renderTable(); } }
-
-        function renderChart() {
+        function renderChart(top10, rest) {
             if (chartInstance) chartInstance.destroy();
-            let top10Sum = 0;
-            let totalSum = 0;
-            // Chart uses top 10 from the full list
-            allHolders.slice(0, 10).forEach(h => top10Sum += h.amount);
-            allHolders.forEach(h => totalSum += h.amount);
-
             const ctx = document.getElementById('supplyChart').getContext('2d');
             chartInstance = new Chart(ctx, {
                 type: 'doughnut',
-                data: {
-                    labels: ['Top 10 Whales', 'Rest of Market'],
-                    datasets: [{ data: [top10Sum, totalSum - top10Sum], backgroundColor: ['#3b82f6', '#1e293b'], borderWidth: 0 }]
-                },
+                data: { labels: ['Top 10', 'Rest'], datasets: [{ data: [top10, rest], backgroundColor: ['#3b82f6', '#1e293b'], borderWidth: 0 }] },
                 options: { plugins: { legend: { labels: { color: 'white' } } } }
             });
         }
 
-        // Search functionality
+        async function loadLeaderboard() {
+            try {
+                const res = await fetch(`${API_BASE}/api/leaderboard`);
+                const data = await res.json();
+                const list = document.getElementById('leaderboard-list');
+                list.innerHTML = "";
+                data.leaderboard.forEach((user, index) => {
+                    const li = document.createElement('li');
+                    li.className = "flex justify-between items-center py-1 border-b border-gray-700";
+                    li.innerHTML = `<span class="text-gray-400">#${index + 1} <a href="#" onclick="fillProof('${user.address}')" class="hover:text-blue-400">${user.address.slice(0,6)}...${user.address.slice(-4)}</a></span><span class="text-yellow-400 font-bold">${user.balance.toFixed(2)} CR</span>`;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadWhales() {
+            try {
+                const res = await fetch(`${API_BASE}/api/whales/activity?hours=24`);
+                const data = await res.json();
+                const list = document.getElementById('whale-list');
+                list.innerHTML = data.movements.length === 0 ? `<li class="text-gray-500 text-xs">No movements yet.</li>` : "";
+                data.movements.slice(0, 8).forEach(m => {
+                    const li = document.createElement('li');
+                    const color = m.direction === "BUY" ? "text-green-400" : "text-red-400";
+                    const icon = m.direction === "BUY" ? "⬆️" : "⬇️";
+                    li.className = "flex justify-between py-1 border-b border-gray-700";
+                    li.innerHTML = `<span class="text-gray-400 text-xs">${icon} ${m.address.slice(0,6)}...</span><span class="${color} font-bold text-xs">${m.direction === "BUY" ? "+" : ""}${parseFloat(m.delta).toLocaleString()} SFM</span>`;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        async function loadMemos() {
+            try {
+                const res = await fetch(`${API_BASE}/api/memos`);
+                const data = await res.json();
+                const list = document.getElementById('memo-list');
+                list.innerHTML = data.memos.length === 0 ? `<li class="text-gray-500 text-xs">No memos yet.</li>` : "";
+                data.memos.slice(0, 5).forEach(m => {
+                    const li = document.createElement('li');
+                    li.className = "py-2 border-b border-gray-700";
+                    li.innerHTML = `<span class="text-purple-300 font-bold text-xs italic">"${m.memo}"</span><span class="text-gray-500 text-[10px] block">by ${m.wallet.slice(0,6)}...</span>`;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
         document.getElementById('search-input').addEventListener('input', (e) => {
-            const val = e.target.value.trim().toLowerCase();
-            if (!val) {
-                filteredHolders = allHolders;
-            } else {
-                filteredHolders = allHolders.filter(h => h.address.toLowerCase().includes(val));
-            }
-            currentPage = 1;
-            renderTable();
+            const val = e.target.value.toLowerCase();
+            const rows = document.querySelectorAll('#holders-table tr');
+            rows.forEach(row => {
+                row.style.display = row.innerText.toLowerCase().includes(val) ? '' : 'none';
+            });
         });
 
         function fillProof(address) {
             document.getElementById('wallet-input').value = address;
-            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+            switchTab('economy');
+            checkProof();
         }
 
         async function checkProof() {
@@ -205,165 +209,35 @@
             try {
                 const res = await fetch(`${API_BASE}/api/prove?address=${address}&min=${min}`);
                 const data = await res.json();
-                
                 if (data.status === "proven") {
                     resultDiv.innerHTML = `
                         <h3 class="text-green-400 font-bold mb-1">✅ Proven</h3>
-                        <p class="mb-2">Held <strong>${data.current_balance.toLocaleString()} tokens</strong> for <strong>${data.duration_hours} hours</strong>.</p>
-                        <div class="bg-blue-900 p-2 rounded text-center mb-2">
-                            <span class="text-xs text-blue-300 block">HOLDER SCORE</span>
-                            <span class="text-xl font-bold text-white">${data.holder_score}</span>
-                        </div>
-                        <div class="bg-purple-900 p-2 rounded text-center mb-4">
-                            <span class="text-xs text-purple-300 block">CURRENT CREDIT BALANCE</span>
-                            <span class="text-lg font-bold text-white">${data.credit_balance.toFixed(2)} CR</span>
-                        </div>
-                        <button onclick="claimCredits('${address}', '${min}')" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded transition">Claim Daily Credits</button>
+                        <p class="mb-2">Held <strong>${data.current_balance.toLocaleString()} SFM</strong> for <strong>${data.duration_hours} hours</strong>.</p>
+                        <div class="bg-blue-900 p-2 rounded text-center mb-2"><span class="text-xs text-blue-300 block">SCORE</span><span class="text-xl font-bold text-white">${data.holder_score}</span></div>
+                        <div class="bg-purple-900 p-2 rounded text-center mb-4"><span class="text-xs text-purple-300 block">CREDITS</span><span class="text-lg font-bold text-white">${data.credit_balance.toFixed(2)} CR</span></div>
+                        <button onclick="claimCredits('${address}', '${min}')" class="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-4 rounded">Claim Daily Credits</button>
                         <div id="claim-result" class="mt-2 text-center text-sm hidden"></div>
                     `;
                 } else {
-                    resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3>
-                        <p>Currently not holding this amount.</p>`;
+                    resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3><p class="text-xs">Currently not holding.</p>`;
                 }
-            } catch (e) { resultDiv.innerHTML = "Error checking."; }
+            } catch (e) { resultDiv.innerHTML = "Error."; }
         }
 
         async function claimCredits(address, min) {
             const claimDiv = document.getElementById('claim-result');
             claimDiv.classList.remove('hidden');
             claimDiv.innerHTML = "Processing...";
-
             try {
-                const res = await fetch(`${API_BASE}/api/claim`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ address: address, min: min })
-                });
+                const res = await fetch(`${API_BASE}/api/claim`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, min }) });
                 const data = await res.json();
-
-                if (res.ok) {
-                    claimDiv.innerHTML = `<span class="text-green-400 font-bold">${data.message}</span>`;
-                    setTimeout(() => checkProof(), 2000); // Refresh balance
-                } else {
-                    claimDiv.innerHTML = `<span class="text-red-400">${data.message || data.error}</span>`;
-                }
-            } catch (e) {
-                claimDiv.innerHTML = `<span class="text-red-400">Error claiming.</span>`;
-            }
+                claimDiv.innerHTML = res.ok ? `<span class="text-green-400 font-bold">${data.message}</span>` : `<span class="text-red-400">${data.message || data.error}</span>`;
+                if (res.ok) setTimeout(() => { checkProof(); loadLeaderboard(); }, 2000);
+            } catch (e) { claimDiv.innerHTML = `<span class="text-red-400">Error.</span>`; }
         }
 
-        async function loadLeaderboard() {
-            try {
-                const res = await fetch(`${API_BASE}/api/leaderboard`);
-                const data = await res.json();
-                const list = document.getElementById('leaderboard-list');
-                list.innerHTML = "";
-                data.leaderboard.forEach((user, index) => {
-                    const li = document.createElement('li');
-                    li.className = "flex justify-between items-center py-1 border-b border-gray-700";
-                    li.innerHTML = `
-                        <span class="text-gray-400">#${index + 1} <a href="#" onclick="fillProof('${user.address}')" class="text-gray-300 hover:text-blue-400">${user.address.slice(0,6)}...${user.address.slice(-4)}</a></span>
-                        <span class="text-yellow-400 font-bold">${user.balance.toFixed(2)} CR</span>
-                    `;
-                    list.appendChild(li);
-                });
-            } catch (e) { console.error(e); }
-        }
-
-        async function transferCredits() {
-            const from = document.getElementById('wallet-input').value.trim(); // Sender is whoever is in the main input
-            const to = document.getElementById('transfer-to').value.trim();
-            const amount = parseFloat(document.getElementById('transfer-amount').value);
-            const resultDiv = document.getElementById('transfer-result');
-
-            if (!from || !to || !amount) {
-                resultDiv.classList.remove('hidden');
-                resultDiv.innerHTML = `<span class="text-red-400">Please fill all fields (Sender is in the top input).</span>`;
-                return;
-            }
-
-            resultDiv.classList.remove('hidden');
-            resultDiv.innerHTML = "Processing...";
-
-            try {
-                const res = await fetch(`${API_BASE}/api/transfer`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ from, to, amount })
-                });
-                const data = await res.json();
-
-                if (res.ok) {
-                    resultDiv.innerHTML = `<span class="text-green-400 font-bold">${data.message}</span>`;
-                    loadLeaderboard(); // Refresh leaderboard
-                    setTimeout(() => checkProof(), 2000);
-                } else {
-                    resultDiv.innerHTML = `<span class="text-red-400">${data.error}</span>`;
-                }
-            } catch (e) {
-                resultDiv.innerHTML = `<span class="text-red-400">Error transferring.</span>`;
-            }
-        }
-
-        async function loadWhales() {
-            try {
-                const res = await fetch(`${API_BASE}/api/whales/activity?hours=24`);
-                const data = await res.json();
-                const list = document.getElementById('whale-list');
-                list.innerHTML = "";
-                
-                if (data.movements.length === 0) {
-                    list.innerHTML = `<li class="text-gray-500">No whale movements in the last 24h (data still accumulating).</li>`;
-                    return;
-                }
-
-                data.movements.slice(0, 8).forEach(m => {
-                    const li = document.createElement('li');
-                    li.className = "flex justify-between items-center py-1 border-b border-gray-700";
-                    const color = m.direction === "BUY" ? "text-green-400" : "text-red-400";
-                    const icon = m.direction === "BUY" ? "⬆️" : "⬇️";
-                    li.innerHTML = `
-                        <span class="text-gray-400 text-xs">
-                            ${icon} <a href="#" onclick="fillProof('${m.address}')" class="hover:text-blue-400">${m.address.slice(0,6)}...${m.address.slice(-4)}</a>
-                        </span>
-                        <span class="${color} font-bold text-xs">
-                            ${m.direction === "BUY" ? "+" : ""}${parseFloat(m.delta).toLocaleString()} SFM
-                        </span>
-                    `;
-                    list.appendChild(li);
-                });
-            } catch (e) { console.error(e); }
-        }
-
-        async function loadMemos() {
-            try {
-                const res = await fetch(`${API_BASE}/api/memos`);
-                const data = await res.json();
-                const list = document.getElementById('memo-list');
-                list.innerHTML = "";
-                
-                if (data.memos.length === 0) {
-                    list.innerHTML = `<li class="text-gray-500">No memos found recently.</li>`;
-                    return;
-                }
-
-                data.memos.slice(0, 5).forEach(m => {
-                    const li = document.createElement('li');
-                    li.className = "flex flex-col py-2 border-b border-gray-700";
-                    li.innerHTML = `
-                        <span class="text-purple-300 font-bold text-xs italic">"${m.memo}"</span>
-                        <span class="text-gray-500 text-[10px] mt-1">by ${m.wallet.slice(0,6)}...${m.wallet.slice(-4)}</span>
-                    `;
-                    list.appendChild(li);
-                });
-            } catch (e) { console.error(e); }
-        }
-
-        loadData();
-        loadLeaderboard();
-        loadWhales();
-        loadMemos();
-        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); }, 60000); // Update every minute
+        loadData(); loadLeaderboard(); loadWhales(); loadMemos();
+        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); }, 60000);
     </script>
 </body>
 </html>
