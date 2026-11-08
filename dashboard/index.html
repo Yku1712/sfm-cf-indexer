@@ -8,46 +8,52 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body class="bg-gray-900 text-white font-sans p-8">
-    <div class="max-w-6xl mx-auto">
+    <div class="max-w-7xl mx-auto">
         <div class="flex items-center justify-between mb-8">
-            <h1 class="text-3xl font-bold text-blue-400">Solfunmeme Data Indexer</h1>
+            <h1 class="text-3xl font-bold text-blue-400">Solfunmeme Explorer</h1>
             <a href="https://github.com/Yku1712/sfm-cf-indexer" target="_blank" class="text-gray-400 hover:text-white underline text-sm">View GitHub Repo</a>
         </div>
 
-        <div class="bg-gray-800 p-4 rounded-lg mb-8 shadow-lg">
-            <h2 class="text-xl mb-2 text-gray-300">System Status</h2>
+        <div class="bg-gray-800 p-4 rounded-lg mb-8 shadow-lg flex justify-between items-center">
             <div id="status" class="text-sm font-mono text-green-400">Loading...</div>
+            <input type="text" id="search-input" placeholder="Search wallet address..." class="p-2 bg-gray-700 rounded border border-gray-600 text-white w-96 focus:outline-none focus:border-blue-500">
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <!-- Top Holders -->
-            <div class="md:col-span-2 bg-gray-800 p-6 rounded-lg shadow-lg">
-                <h2 class="text-xl mb-4 text-blue-300">Top 100 Holders (Out of 3,691)</h2>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Main Table Area -->
+            <div class="lg:col-span-2 bg-gray-800 p-6 rounded-lg shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl text-blue-300">Holders Ranking</h2>
+                    <div class="text-sm text-gray-400" id="page-info">Page 1</div>
+                </div>
                 <div class="overflow-y-auto h-[600px]">
                     <table class="w-full text-left text-sm">
-                        <thead class="text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800">
+                        <thead class="text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
                             <tr>
-                                <th class="pb-2">#</th>
+                                <th class="pb-2">Rank</th>
                                 <th class="pb-2">Address</th>
-                                <th class="pb-2 text-right">Amount (Tokens)</th>
+                                <th class="pb-2 text-right">Amount</th>
+                                <th class="pb-2 text-right">Action</th>
                             </tr>
                         </thead>
                         <tbody id="holders-table" class="divide-y divide-gray-700">
-                            <!-- Data inserted here -->
+                            <!-- Rendered via JS -->
                         </tbody>
                     </table>
+                </div>
+                <div class="flex justify-between items-center mt-4 pt-4 border-t border-gray-700">
+                    <button onclick="prevPage()" id="btn-prev" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded disabled:opacity-50 text-sm">← Previous</button>
+                    <button onclick="nextPage()" id="btn-next" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">Next →</button>
                 </div>
             </div>
 
             <!-- Right Panel -->
             <div class="space-y-8">
-                <!-- Chart -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Supply Distribution</h2>
                     <canvas id="supplyChart"></canvas>
                 </div>
 
-                <!-- Proof of Holding -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Prove Your Holding</h2>
                     <input type="text" id="wallet-input" placeholder="Wallet Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
@@ -61,64 +67,100 @@
 
     <script>
         const API_BASE = "https://sfm-cf-indexer.yku-solfunmeme.workers.dev";
+        let allHolders = [];
+        let filteredHolders = [];
+        let currentPage = 1;
+        const rowsPerPage = 50;
         let chartInstance = null;
 
-        async function loadStatus() {
+        async function loadData() {
             try {
-                const res = await fetch(`${API_BASE}/api/health`);
-                const data = await res.json();
+                // Fetch status
+                const resHealth = await fetch(`${API_BASE}/api/health`);
+                const dataHealth = await resHealth.json();
                 document.getElementById('status').innerHTML = `
-                    Status: <span class="text-green-400">${data.status.toUpperCase()}</span> | 
-                    Total Holders Tracked: <strong>${data.total_holders_stored.toLocaleString()}</strong> | 
-                    Last Update: ${data.last_update_age_sec ? data.last_update_age_sec + 's ago' : 'Pending'}
+                    Status: <span class="text-green-400">${dataHealth.status.toUpperCase()}</span> | 
+                    Tracked: <strong>${dataHealth.total_holders_stored.toLocaleString()}</strong>
                 `;
-            } catch (e) { document.getElementById('status').innerText = "Error connecting to API."; }
-        }
 
-        async function loadHolders() {
-            try {
-                const res = await fetch(`${API_BASE}/api/holders?limit=100`);
+                // Fetch ALL holders (max 5000)
+                const res = await fetch(`${API_BASE}/api/holders?limit=5000`);
                 const data = await res.json();
-                const tbody = document.getElementById('holders-table');
-                tbody.innerHTML = "";
+                allHolders = data.holders;
+                filteredHolders = allHolders;
                 
-                let top10Sum = 0;
-                let totalSum = 0;
-
-                data.holders.forEach((holder, index) => {
-                    if (index < 10) top10Sum += holder.amount;
-                    totalSum += holder.amount;
-
-                    const tr = document.createElement('tr');
-                    // 6 decimals
-                    const formattedAmount = (holder.amount / 1000000).toLocaleString(undefined, {maximumFractionDigits: 0});
-                    tr.innerHTML = `
-                        <td class="py-2 text-gray-500">${index + 1}</td>
-                        <td class="py-2 font-mono text-xs"><a href="https://solscan.io/account/${holder.address}" target="_blank" class="hover:text-blue-400">${holder.address.slice(0, 4)}...${holder.address.slice(-4)}</a></td>
-                        <td class="py-2 text-right text-green-400">${formattedAmount}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-
-                renderChart(top10Sum, totalSum - top10Sum);
-            } catch (e) { console.error(e); }
+                renderTable();
+                renderChart();
+            } catch (e) { 
+                document.getElementById('status').innerText = "Error connecting to API."; 
+            }
         }
 
-        function renderChart(top10, rest) {
+        function renderTable() {
+            const tbody = document.getElementById('holders-table');
+            tbody.innerHTML = "";
+            
+            const start = (currentPage - 1) * rowsPerPage;
+            const end = start + rowsPerPage;
+            const pageItems = filteredHolders.slice(start, end);
+
+            pageItems.forEach((holder, index) => {
+                const actualRank = start + index + 1;
+                const tr = document.createElement('tr');
+                const formattedAmount = (holder.amount / 1000000).toLocaleString(undefined, {maximumFractionDigits: 0});
+                tr.innerHTML = `
+                    <td class="py-2 text-gray-500">#${actualRank}</td>
+                    <td class="py-2 font-mono text-xs cursor-pointer hover:text-blue-400" onclick="fillProof('${holder.address}')">${holder.address}</td>
+                    <td class="py-2 text-right text-green-400">${formattedAmount}</td>
+                    <td class="py-2 text-right">
+                        <button onclick="fillProof('${holder.address}')" class="text-xs bg-gray-700 px-2 py-1 rounded hover:bg-gray-600">Verify</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('page-info').innerText = `Page ${currentPage} of ${Math.ceil(filteredHolders.length / rowsPerPage) || 1}`;
+            document.getElementById('btn-prev').disabled = currentPage === 1;
+            document.getElementById('btn-next').disabled = end >= filteredHolders.length;
+        }
+
+        function nextPage() { if ((currentPage * rowsPerPage) < filteredHolders.length) { currentPage++; renderTable(); } }
+        function prevPage() { if (currentPage > 1) { currentPage--; renderTable(); } }
+
+        function renderChart() {
             if (chartInstance) chartInstance.destroy();
+            let top10Sum = 0;
+            let totalSum = 0;
+            // Chart uses top 10 from the full list
+            allHolders.slice(0, 10).forEach(h => top10Sum += h.amount);
+            allHolders.forEach(h => totalSum += h.amount);
+
             const ctx = document.getElementById('supplyChart').getContext('2d');
             chartInstance = new Chart(ctx, {
                 type: 'doughnut',
                 data: {
-                    labels: ['Top 10 Whales', 'Rest of Holders'],
-                    datasets: [{
-                        data: [top10, rest],
-                        backgroundColor: ['#3b82f6', '#1e293b'],
-                        borderWidth: 0
-                    }]
+                    labels: ['Top 10 Whales', 'Rest of Market'],
+                    datasets: [{ data: [top10Sum, totalSum - top10Sum], backgroundColor: ['#3b82f6', '#1e293b'], borderWidth: 0 }]
                 },
                 options: { plugins: { legend: { labels: { color: 'white' } } } }
             });
+        }
+
+        // Search functionality
+        document.getElementById('search-input').addEventListener('input', (e) => {
+            const val = e.target.value.trim().toLowerCase();
+            if (!val) {
+                filteredHolders = allHolders;
+            } else {
+                filteredHolders = allHolders.filter(h => h.address.toLowerCase().includes(val));
+            }
+            currentPage = 1;
+            renderTable();
+        });
+
+        function fillProof(address) {
+            document.getElementById('wallet-input').value = address;
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
         }
 
         async function checkProof() {
@@ -139,13 +181,13 @@
                         <p>Held for <strong>${data.duration_hours} hours</strong> continuously.</p>`;
                 } else {
                     resultDiv.innerHTML = `<h3 class="text-red-400 font-bold mb-1">❌ Not Proven</h3>
-                        <p>Did not hold minimum amount recently.</p>`;
+                        <p>Currently not holding this amount.</p>`;
                 }
             } catch (e) { resultDiv.innerHTML = "Error checking."; }
         }
 
-        loadStatus(); loadHolders();
-        setInterval(() => { loadStatus(); loadHolders(); }, 60000); // Update every minute
+        loadData();
+        setInterval(loadData, 60000); // Update every minute
     </script>
 </body>
 </html>

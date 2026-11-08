@@ -26,7 +26,7 @@ export default {
     }
 
     if (url.pathname === "/api/holders") {
-      const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 1000);
+      const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10), 5000);
       const { results } = await env.DB.prepare("SELECT * FROM holders ORDER BY amount DESC LIMIT ?").bind(limit).all();
       return json({ mint: MINT_ADDRESS, count: results.length, holders: results });
     }
