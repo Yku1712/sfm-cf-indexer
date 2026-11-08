@@ -9,7 +9,14 @@ const corsHeaders = {
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "*/5 * * * *") ctx.waitUntil(fetchTop20AndStore(env));
-    if (event.cron === "0 0 * * *") ctx.waitUntil(fetchAllAndStore(env));
+    if (event.cron === "0 0 * * *") {
+      ctx.waitUntil(fetchAllAndStore(env));
+      ctx.waitUntil(fetchMemosAndStore(env)); // Also fetch memos daily
+    }
+    // Run memos every 15 mins
+    if (event.cron === "*/5 * * * *") {
+      ctx.waitUntil(fetchMemosAndStore(env)); 
+    }
   },
 
   async fetch(request, env, ctx) {
@@ -191,6 +198,12 @@ export default {
       });
     }
 
+    // MEMOS ENDPOINT
+    if (url.pathname === "/api/memos") {
+      const { results } = await env.DB.prepare("SELECT * FROM memos ORDER BY block_time DESC LIMIT 50").all();
+      return json({ status: "ok", count: results.length, memos: results });
+    }
+
     return new Response("Not found", { status: 404, headers: corsHeaders });
   },
 };
@@ -249,6 +262,59 @@ async function fetchTop20AndStore(env) {
   if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
   if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
   return { status: "ok", count: holdersStmts.length };
+}
+
+async function fetchMemosAndStore(env) {
+  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
+  const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
+  
+  // 1. Get recent signatures for the mint
+  const sigPayload = {
+    jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress",
+    params: [MINT_ADDRESS, { limit: 20 }] // Fetch last 20 txs
+  };
+
+  const sigRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sigPayload) });
+  if (!sigRes.ok) throw new Error("Failed to fetch signatures");
+  const sigData = await sigRes.json();
+  
+  if (!sigData.result) return { status: "ok", count: 0 };
+
+  let memoCount = 0;
+  const stmts = [];
+
+  for (const sigInfo of sigData.result) {
+    // Check if we already processed this signature
+    const { results: existing } = await env.DB.prepare("SELECT signature FROM memos WHERE signature = ?").bind(sigInfo.signature).all();
+    if (existing.length > 0) continue; // Skip already processed
+
+    // Fetch the full transaction to find memos
+    const txPayload = {
+      jsonrpc: "2.0", id: 1, method: "getTransaction",
+      params: [sigInfo.signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }]
+    };
+    
+    const txRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(txPayload) });
+    if (!txRes.ok) continue;
+    const txData = await txRes.json();
+    
+    if (!txData.result) continue;
+    
+    const instructions = txData.result.transaction.message.instructions;
+    for (const ix of instructions) {
+      if (ix.program === "spl-memo" && typeof ix.parsed === "string") {
+        // We found a memo!
+        const wallet = txData.result.transaction.message.accountKeys[0]?.pubkey || "unknown";
+        const blockTime = txData.result.blockTime;
+        stmts.push(env.DB.prepare("INSERT OR IGNORE INTO memos (signature, wallet, memo, block_time) VALUES (?, ?, ?, ?)")
+          .bind(sigInfo.signature, wallet, ix.parsed, blockTime));
+        memoCount++;
+      }
+    }
+  }
+
+  if (stmts.length > 0) await env.DB.batch(stmts);
+  return { status: "ok", mode: "memos", count: memoCount };
 }
 
 async function fetchAllAndStore(env) {

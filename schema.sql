@@ -3,23 +3,18 @@ CREATE TABLE IF NOT EXISTS holders (
   amount REAL,
   updated_at INTEGER
 );
-
 CREATE TABLE IF NOT EXISTS snapshots (
   address TEXT,
   amount REAL,
   snapshot_at INTEGER,
   PRIMARY KEY (address, snapshot_at)
 );
-
 CREATE INDEX IF NOT EXISTS idx_snapshots_addr_time ON snapshots(address, snapshot_at);
-
 CREATE TABLE IF NOT EXISTS credits (
   address TEXT PRIMARY KEY,
   balance REAL DEFAULT 0,
   last_claimed_at INTEGER
 );
-
--- NEW: Ledger for all credit movements
 CREATE TABLE IF NOT EXISTS transactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   from_address TEXT,
@@ -27,4 +22,11 @@ CREATE TABLE IF NOT EXISTS transactions (
   amount REAL,
   tx_type TEXT,
   created_at INTEGER
+);
+-- NEW: Memos table
+CREATE TABLE IF NOT EXISTS memos (
+  signature TEXT PRIMARY KEY,
+  wallet TEXT,
+  memo TEXT,
+  block_time INTEGER
 );

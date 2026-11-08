@@ -72,6 +72,13 @@
                 </div>
 
                 <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                    <h2 class="text-xl mb-4 text-purple-400">📝 On-Chain Memos</h2>
+                    <ul id="memo-list" class="space-y-2 text-sm font-mono">
+                        <li class="text-gray-500">Loading...</li>
+                    </ul>
+                </div>
+
+                <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
                     <h2 class="text-xl mb-4 text-blue-300">Prove Your Holding</h2>
                     <input type="text" id="wallet-input" placeholder="Wallet Address" class="w-full p-2 mb-2 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
                     <input type="number" id="min-input" value="1" placeholder="Min amount" class="w-full p-2 mb-4 bg-gray-700 rounded border border-gray-600 text-white focus:outline-none focus:border-blue-500">
@@ -328,10 +335,35 @@
             } catch (e) { console.error(e); }
         }
 
+        async function loadMemos() {
+            try {
+                const res = await fetch(`${API_BASE}/api/memos`);
+                const data = await res.json();
+                const list = document.getElementById('memo-list');
+                list.innerHTML = "";
+                
+                if (data.memos.length === 0) {
+                    list.innerHTML = `<li class="text-gray-500">No memos found recently.</li>`;
+                    return;
+                }
+
+                data.memos.slice(0, 5).forEach(m => {
+                    const li = document.createElement('li');
+                    li.className = "flex flex-col py-2 border-b border-gray-700";
+                    li.innerHTML = `
+                        <span class="text-purple-300 font-bold text-xs italic">"${m.memo}"</span>
+                        <span class="text-gray-500 text-[10px] mt-1">by ${m.wallet.slice(0,6)}...${m.wallet.slice(-4)}</span>
+                    `;
+                    list.appendChild(li);
+                });
+            } catch (e) { console.error(e); }
+        }
+
         loadData();
         loadLeaderboard();
         loadWhales();
-        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); }, 60000); // Update every minute
+        loadMemos();
+        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); }, 60000); // Update every minute
     </script>
 </body>
 </html>
