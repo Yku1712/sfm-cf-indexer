@@ -9,7 +9,7 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname === "/" || url.pathname === "") {
-      return new Response("SFM Indexer API\n\nEndpoints:\n- /api/holders?limit=N\n- /api/health\n- /api/refresh\n", { headers: { "Content-Type": "text/plain" } });
+      return new Response("SFM Indexer API\n\nEndpoints:\n- /api/holders?limit=N\n- /api/health\n- /api/refresh\n- /api/prove?address=ADDRESS&min=AMOUNT\n", { headers: { "Content-Type": "text/plain" } });
     }
 
     if (url.pathname === "/api/health") {
@@ -30,6 +30,35 @@ export default {
       return json({ mint: MINT_ADDRESS, count: results.length, holders: results });
     }
 
+    if (url.pathname === "/api/prove") {
+      const address = url.searchParams.get("address");
+      const minAmount = parseFloat(url.searchParams.get("min") || "1");
+      
+      if (!address) return json({ error: "Missing ?address= parameter" }, 400);
+
+      // Find first and last time they held this amount
+      const { results } = await env.DB.prepare(
+        "SELECT COUNT(*) as snapshots_held, MIN(snapshot_at) as first_seen, MAX(snapshot_at) as last_seen FROM snapshots WHERE address = ? AND amount >= ?"
+      ).bind(address, minAmount).all();
+
+      const data = results[0];
+      if (data.snapshots_held === 0) {
+        return json({ status: "failed", message: "Address has never held this minimum amount", address, min_amount: minAmount });
+      }
+
+      const durationSeconds = data.last_seen - data.first_seen;
+      return json({
+        status: "proven",
+        address: address,
+        min_amount_held: minAmount,
+        first_seen_at: data.first_seen,
+        last_seen_at: data.last_seen,
+        duration_seconds: durationSeconds,
+        duration_hours: (durationSeconds / 3600).toFixed(2),
+        snapshots_held: data.snapshots_held
+      });
+    }
+
     if (url.pathname === "/api/refresh") {
       try {
         const result = await fetchAndStore(env);
@@ -44,9 +73,7 @@ export default {
 };
 
 async function fetchAndStore(env) {
-  if (!env.HELIUS_API_KEY) {
-    throw new Error("HELIUS_API_KEY not configured. Run: npx wrangler secret put HELIUS_API_KEY");
-  }
+  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
 
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const payload = {
@@ -59,30 +86,31 @@ async function fetchAndStore(env) {
 
   try {
     const response = await fetch(rpcUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload), signal: controller.signal,
     });
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`Helius HTTP ${response.status}: ${body.slice(0, 200)}`);
-    }
-
+    if (!response.ok) throw new Error(`Helius HTTP ${response.status}`);
     const data = await response.json();
     if (data.error) throw new Error(`Helius RPC error: ${JSON.stringify(data.error)}`);
-    if (!data.result || !Array.isArray(data.result.value)) throw new Error("Invalid Helius response");
 
     const now = Math.floor(Date.now() / 1000);
-    const stmts = data.result.value.map((acc) =>
-      env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)")
-        .bind(acc.address, parseFloat(acc.amount), now)
-    );
+    const holdersStmts = [];
+    const snapshotStmts = [];
 
-    if (stmts.length > 0) await env.DB.batch(stmts);
-    return { status: "ok", count: stmts.length, rpc: "helius" };
+    for (const acc of data.result.value) {
+      const amt = parseFloat(acc.amount);
+      // 1. Update live holders
+      holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
+      // 2. Save historical snapshot
+      snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
+    }
+
+    if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
+    if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
+
+    return { status: "ok", count: holdersStmts.length, rpc: "helius" };
   } catch (e) {
     clearTimeout(timeoutId);
     throw e;
