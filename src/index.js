@@ -8,7 +8,14 @@ const corsHeaders = {
 
 export default {
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(fetchAndStore(env));
+    // Cron 1: Every 5 mins (Top 20 fast updates)
+    if (event.cron === "*/5 * * * *") {
+      ctx.waitUntil(fetchTop20AndStore(env));
+    }
+    // Cron 2: Daily at midnight (Full sweep for all 3700+)
+    if (event.cron === "0 0 * * *") {
+      ctx.waitUntil(fetchAllAndStore(env));
+    }
   },
 
   async fetch(request, env, ctx) {
@@ -29,7 +36,6 @@ export default {
       return json({ mint: MINT_ADDRESS, count: results.length, holders: results });
     }
 
-    // EXPORT CSV FEATURE
     if (url.pathname === "/api/export") {
       const { results } = await env.DB.prepare("SELECT address, amount FROM holders ORDER BY amount DESC").all();
       let csv = "Address,RawAmount,FormattedAmount\n";
@@ -41,14 +47,16 @@ export default {
       });
     }
 
-    // SECURED REFRESH
     if (url.pathname === "/api/refresh") {
       const auth = request.headers.get("Authorization");
       if (auth !== `Bearer ${env.REFRESH_SECRET}`) return json({ error: "Unauthorized" }, 401);
-      try { return json(await fetchAndStore(env)); } catch (e) { return json({ error: e.message }, 500); }
+      try {
+        // By default, manual refresh only does top 20 to save API credits
+        const result = await fetchTop20AndStore(env);
+        return json(result);
+      } catch (e) { return json({ error: e.message }, 500); }
     }
 
-    // PROOF & SCORE LOGIC
     if (url.pathname === "/api/prove") {
       const address = url.searchParams.get("address");
       const minAmount = parseFloat(url.searchParams.get("min") || "1");
@@ -74,9 +82,8 @@ export default {
       const now = Math.floor(Date.now() / 1000);
       const durationSeconds = now - startTime;
       const durationDays = durationSeconds / 86400;
-      const currentAmount = current[0].amount / 1000000; // Formatted tokens
+      const currentAmount = current[0].amount / 1000000; 
       
-      // SCORE FORMULA: (Tokens held) * (Days held)
       const score = (currentAmount * durationDays).toFixed(2);
 
       return json({
@@ -95,38 +102,79 @@ export default {
   },
 };
 
-async function fetchAndStore(env) {
+// ==========================================
+// FETCHERS
+// ==========================================
+
+async function fetchTop20AndStore(env) {
   if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   const payload = { jsonrpc: "2.0", id: 1, method: "getTokenLargestAccounts", params: [MINT_ADDRESS, { commitment: "confirmed" }] };
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  if (!response.ok) throw new Error(`Helius HTTP ${response.status}`);
+  const data = await response.json();
+  if (data.error) throw new Error(`Helius RPC error`);
 
-  try {
-    const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload), signal: controller.signal });
-    clearTimeout(timeoutId);
-    if (!response.ok) throw new Error(`Helius HTTP ${response.status}`);
+  const now = Math.floor(Date.now() / 1000);
+  const holdersStmts = [];
+  const snapshotStmts = [];
+
+  for (const acc of data.result.value) {
+    const amt = parseFloat(acc.amount);
+    holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
+    snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
+  }
+
+  if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
+  if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
+  return { status: "ok", mode: "top20", count: holdersStmts.length };
+}
+
+async function fetchAllAndStore(env) {
+  if (!env.HELIUS_API_KEY) throw new Error("HELIUS_API_KEY not configured");
+  const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
+  const now = Math.floor(Date.now() / 1000);
+  let page = 1;
+  let hasMore = true;
+  let totalStored = 0;
+
+  while (hasMore) {
+    const payload = {
+      jsonrpc: "2.0", id: "1", method: "getTokenAccounts",
+      params: { mint: MINT_ADDRESS, page: page, limit: 1000 }
+    };
+    
+    const response = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    if (!response.ok) break;
+    
     const data = await response.json();
-    if (data.error) throw new Error(`Helius RPC error`);
+    if (!data.result || !data.result.token_accounts || data.result.token_accounts.length === 0) {
+      hasMore = false;
+      break;
+    }
 
-    const now = Math.floor(Date.now() / 1000);
     const holdersStmts = [];
     const snapshotStmts = [];
 
-    for (const acc of data.result.value) {
-      const amt = parseFloat(acc.amount);
-      holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
-      snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.address, amt, now));
+    for (const acc of data.result.token_accounts) {
+      if (acc.amount > 0) {
+        holdersStmts.push(env.DB.prepare("INSERT OR REPLACE INTO holders (address, amount, updated_at) VALUES (?, ?, ?)").bind(acc.owner, acc.amount, now));
+        snapshotStmts.push(env.DB.prepare("INSERT OR REPLACE INTO snapshots (address, amount, snapshot_at) VALUES (?, ?, ?)").bind(acc.owner, acc.amount, now));
+      }
     }
 
     if (holdersStmts.length > 0) await env.DB.batch(holdersStmts);
     if (snapshotStmts.length > 0) await env.DB.batch(snapshotStmts);
-    return { status: "ok", count: holdersStmts.length };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
+
+    totalStored += holdersStmts.length;
+    page++;
+    
+    // Slight delay to avoid rate limiting
+    await new Promise(r => setTimeout(r, 500));
   }
+  
+  return { status: "ok", mode: "full_sweep", count: totalStored };
 }
 
 function json(obj, status = 200) {

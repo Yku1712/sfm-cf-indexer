@@ -8,4 +8,4 @@ database_name = "sfm-indexer-db"
 database_id = "e33f881f-eaff-4e33-a678-5ed0333402c7"
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "0 0 * * *"]
