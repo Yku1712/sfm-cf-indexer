@@ -37,6 +37,7 @@
             <button onclick="switchTab('overview')" id="tab-overview" class="px-6 py-2 text-blue-400 border-b-2 border-blue-400 font-bold">Overview</button>
             <button onclick="switchTab('economy')" id="tab-economy" class="px-6 py-2 text-gray-400 hover:text-white">Economy</button>
             <button onclick="switchTab('activity')" id="tab-activity" class="px-6 py-2 text-gray-400 hover:text-white">Activity</button>
+            <button onclick="switchTab('rollup')" id="tab-rollup" class="px-6 py-2 text-gray-400 hover:text-white">Rollup (On-Chain)</button>
         </div>
 
         <!-- TAB 1: OVERVIEW -->
@@ -100,6 +101,24 @@
             </div>
         </div>
 
+        <!-- TAB 4: ROLLUP -->
+        <div id="content-rollup" class="hidden grid-cols-1 gap-6">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-xl mb-4 text-orange-400">⛓️ Rollup Batches (Merkle Roots)</h2>
+                <p class="text-sm text-gray-400 mb-6">These are the cryptographic proofs generated from off-chain transactions. They can be submitted to the Solana contract for on-chain verification.</p>
+                <div class="overflow-y-auto max-h-96">
+                    <table class="w-full text-left text-sm">
+                        <thead class="text-gray-400 border-b border-gray-700 sticky top-0 bg-gray-800 z-10">
+                            <tr><th class="pb-2">Batch ID</th><th class="pb-2">Merkle Root</th><th class="pb-2">Tx Count</th><th class="pb-2">Date</th></tr>
+                        </thead>
+                        <tbody id="rollup-table" class="divide-y divide-gray-700">
+                            <!-- Data inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -108,7 +127,7 @@
         let connectedWallet = null;
 
         function switchTab(tab) {
-            ['overview', 'economy', 'activity'].forEach(t => {
+            ['overview', 'economy', 'activity', 'rollup'].forEach(t => {
                 document.getElementById(`content-${t}`).classList.add('hidden');
                 document.getElementById(`content-${t}`).classList.remove('grid');
                 document.getElementById(`tab-${t}`).className = "px-6 py-2 text-gray-400 hover:text-white";
@@ -424,8 +443,34 @@
 
         setupWalletListener();
 
-        loadData(); loadLeaderboard(); loadWhales(); loadMemos();
-        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); }, 60000);
+        async function loadRollupBatches() {
+            try {
+                const res = await fetch(`${API_BASE}/api/rollup/batches`);
+                const data = await res.json();
+                const tbody = document.getElementById('rollup-table');
+                tbody.innerHTML = "";
+                
+                if (data.batches.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-gray-500">No batches generated yet. Go to Economy and claim to create one.</td></tr>`;
+                    return;
+                }
+
+                data.batches.forEach(batch => {
+                    const date = new Date(batch.created_at * 1000).toLocaleString();
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td class="py-2 text-gray-500">#${batch.id}</td>
+                        <td class="py-2 font-mono text-xs text-blue-300 cursor-pointer hover:text-white" title="${batch.merkle_root}" onclick="navigator.clipboard.writeText('${batch.merkle_root}')">${batch.merkle_root.slice(0, 16)}...</td>
+                        <td class="py-2 text-green-400">${batch.tx_count} txs</td>
+                        <td class="py-2 text-gray-400 text-xs">${date}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (e) { console.error(e); }
+        }
+
+        loadData(); loadLeaderboard(); loadWhales(); loadMemos(); loadRollupBatches();
+        setInterval(() => { loadData(); loadLeaderboard(); loadWhales(); loadMemos(); loadRollupBatches(); }, 60000);
     </script>
 </body>
 </html>
