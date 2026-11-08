@@ -211,22 +211,27 @@ export default {
         return json({ status: "ok", message: "No new transactions to batch." });
       }
 
-      // 1. Generate Leaf Hashes
+      // 1. Generate Leaf Hashes (SHA-256 over the string representation)
       let leaves = [];
       for (const tx of txs) {
         const leafString = `${tx.id}:${tx.from_address}:${tx.to_address}:${tx.amount}:${tx.tx_type}:${tx.created_at}`;
         leaves.push(await sha256(leafString));
       }
 
-      // 2. Build the Merkle Tree levels
+      // 2. Build the Merkle Tree levels (hash RAW BYTES of pairs, matching Rust contract)
       let tree = [leaves];
       while (tree[tree.length - 1].length > 1) {
         let currentLevel = tree[tree.length - 1];
         let nextLevel = [];
         for (let i = 0; i < currentLevel.length; i += 2) {
           let left = currentLevel[i];
-          let right = (i + 1 < currentLevel.length) ? currentLevel[i + 1] : left; // duplicate last if odd
-          nextLevel.push(await sha256(left + right));
+          let right = (i + 1 < currentLevel.length) ? currentLevel[i + 1] : left;
+          // Sort lexicographically to match Rust if computed_hash <= p
+          if (left <= right) {
+            nextLevel.push(await sha256Pair(left, right));
+          } else {
+            nextLevel.push(await sha256Pair(right, left));
+          }
         }
         tree.push(nextLevel);
       }
@@ -308,6 +313,32 @@ async function sendAlert(env, title, message, metadata = {}) {
   } catch (e) { 
     console.error("Telegram fetch failed:", e); 
   }
+}
+
+// Convert hex string to raw bytes (for Merkle tree hashing consistency with Rust contract)
+function hexToBytes(hex) {
+  const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < clean.length; i += 2) {
+    bytes[i / 2] = parseInt(clean.substr(i, 2), 16);
+  }
+  return bytes;
+}
+
+// SHA-256 over raw bytes, returns hex string
+async function sha256RawBytes(bytes) {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// SHA-256 over two raw 32-byte hashes concatenated (matches Rust sha256_pair)
+async function sha256Pair(leftHex, rightHex) {
+  const left = hexToBytes(leftHex);
+  const right = hexToBytes(rightHex);
+  const combined = new Uint8Array(64);
+  combined.set(left, 0);
+  combined.set(right, 32);
+  return sha256RawBytes(combined);
 }
 
 async function sha256(message) {
