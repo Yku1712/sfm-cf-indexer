@@ -27,6 +27,11 @@ function base58ToUint8Array(str) {
   return new Uint8Array(result.reverse());
 }
 
+// RPC fetch with per-request timeout (Cloudflare Worker wall clock is ~30s).
+async function fetchRpc(url, init, timeoutMs = 8000) {
+  return fetch(url, Object.assign({}, init, { signal: AbortSignal.timeout(timeoutMs) }));
+}
+
 export default {
   async scheduled(event, env, ctx) {
     if (event.cron === "*/5 * * * *") {
@@ -112,11 +117,16 @@ export default {
       const address = url.searchParams.get("address");
       const minAmount = parseFloat(url.searchParams.get("min") || "1");
       if (!address) return json({ error: "Missing address" }, 400);
-      const proof = await calculateProof(env, address, minAmount);
-      if (proof.status === "failed") return json(proof);
-      const { results: credits } = await env.DB.prepare("SELECT * FROM credits WHERE address = ?").bind(address).all();
-      proof.credit_balance = credits[0]?.balance || 0;
-      return json(proof);
+      try {
+        const proof = await calculateProof(env, address, minAmount);
+        if (proof.status === "failed") return json(proof);
+        const { results: credits } = await env.DB.prepare("SELECT * FROM credits WHERE address = ?").bind(address).all();
+        proof.credit_balance = credits[0]?.balance || 0;
+        return json(proof);
+      } catch (e) {
+        console.error("/api/prove failed", { address, minAmount, error: e?.message, stack: e?.stack });
+        return json({ status: "error", error: e?.message || "internal error", address }, 500);
+      }
     }
 
     if (url.pathname === "/api/claim" && request.method === "POST") {
@@ -361,13 +371,15 @@ async function calculateProof(env, address, minAmount) {
     if (!current[0]) {
       const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
       const payload = { jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [address, { "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { "encoding": "jsonParsed" }] };
-      const res = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const res = await fetchRpc(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const data = await res.json();
       let totalRaw = 0;
-      if (data.result && data.result.value) {
+      if (data?.result?.value) {
         for (const acc of data.result.value) {
-          if (acc.account.data.parsed.info.mint === MINT_ADDRESS) {
-            totalRaw += parseFloat(acc.account.data.parsed.info.tokenAmount.amount);
+          const info = acc?.account?.data?.parsed?.info;
+          if (info?.mint === MINT_ADDRESS) {
+            const amt = parseFloat(info?.tokenAmount?.amount);
+            if (Number.isFinite(amt)) totalRaw += amt;
           }
         }
       }
@@ -399,10 +411,10 @@ async function getOnChainHoldingStart(env, walletAddress) {
   const rpcUrl = `https://mainnet.helius-rpc.com/?api-key=${env.HELIUS_API_KEY}`;
   
   // 1. Găsim Token Account-ul (ATA) al portofelului
-  const ataRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [walletAddress, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed" }] }) });
+  const ataRes = await fetchRpc(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getTokenAccountsByOwner", params: [walletAddress, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed" }] }) });
   const ataData = await ataRes.json();
-  if (!ataData.result || ataData.result.value.length === 0) return null;
-  const validAta = ataData.result.value.find(acc => acc.account.data.parsed.info.mint === MINT_ADDRESS);
+  if (!ataData?.result?.value?.length) return null;
+  const validAta = ataData.result.value.find(acc => acc?.account?.data?.parsed?.info?.mint === MINT_ADDRESS);
   if (!validAta) return null;
   const tokenAccount = validAta.pubkey;
 
@@ -415,7 +427,7 @@ async function getOnChainHoldingStart(env, walletAddress) {
     const sigParams = [tokenAccount, { limit: 100 }];
     if (before) sigParams[1].before = before;
     
-    const sigRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: sigParams }) });
+    const sigRes = await fetchRpc(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSignaturesForAddress", params: sigParams }) });
     const sigData = await sigRes.json();
     if (!sigData.result || sigData.result.length === 0) break;
 
@@ -423,16 +435,19 @@ async function getOnChainHoldingStart(env, walletAddress) {
     const txs = sigData.result.map(s => s.signature);
     const batchPayload = txs.map((sig, i) => ({ jsonrpc: "2.0", id: i, method: "getTransaction", params: [sig, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }] }));
     
-    const batchRes = await fetch(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batchPayload) });
+    const batchRes = await fetchRpc(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(batchPayload) });
     const batchData = await batchRes.json();
 
     for (let i = 0; i < batchData.length; i++) {
       const tx = batchData[i];
       if (!tx.result || !tx.result.meta) continue;
 
-      const accountIndex = tx.result.transaction.message.accountKeys.findIndex(a => a.pubkey === tokenAccount);
-      const pre = tx.result.meta.preTokenBalances?.find(b => b.accountIndex === accountIndex);
-      const post = tx.result.meta.postTokenBalances?.find(b => b.accountIndex === accountIndex);
+      const keys = tx?.result?.transaction?.message?.accountKeys;
+      if (!Array.isArray(keys)) continue;
+      const accountIndex = keys.findIndex(a => a?.pubkey === tokenAccount);
+      if (accountIndex < 0) continue;
+      const pre = tx.result.meta?.preTokenBalances?.find(b => b?.accountIndex === accountIndex);
+      const post = tx.result.meta?.postTokenBalances?.find(b => b?.accountIndex === accountIndex);
 
       const preAmt = pre ? parseFloat(pre.uiTokenAmount.amount) : 0;
       const postAmt = post ? parseFloat(post.uiTokenAmount.amount) : 0;
