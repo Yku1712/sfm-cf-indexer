@@ -29,7 +29,12 @@ function base58ToUint8Array(str) {
 
 // RPC fetch with per-request timeout (Cloudflare Worker wall clock is ~30s).
 async function fetchRpc(url, init, timeoutMs = 8000) {
-  return fetch(url, Object.assign({}, init, { signal: AbortSignal.timeout(timeoutMs) }));
+  const res = await fetch(url, Object.assign({}, init, { signal: AbortSignal.timeout(timeoutMs) }));
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error("Helius HTTP " + res.status + ": " + text);
+  }
+  return res;
 }
 
 export default {
